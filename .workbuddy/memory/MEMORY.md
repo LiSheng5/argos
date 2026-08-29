@@ -1,5 +1,8 @@
 # NPCSidekick robot —— 项目长期记忆
 
+> 2026-08-29 完成一轮大改造（评审 → 修 P0/P1 → 真机骨架 → 看门狗 → 位姿判据）。
+> **全貌见 `机器人/里程碑_20260829.md`**，本文件只放跨会话长期有效的事实与规矩。
+
 ## 硬件硬门槛（2026-08-29 查证，来源：宇树官网支持页）
 
 **Go2 分型号，只有部分型号开放二次开发：**
@@ -30,15 +33,31 @@ AIR / PRO **官方不开放**二次开发 → 真机 DDS 路线走不通。做�
 
 - 唯一能跑测试的 venv：`C:\Users\Administrator\.workbuddy\binaries\python\envs\default`
   （已装 pytest / fastapi / httpx）
-- **mujoco / cyclonedds / unitree_sdk2py 未装** → test_sim_smoke(2)、test_dds_sim(1)、
-  test_dds_walk(1) 三个是 skip，DDS"真走 2m"的结论**尚未复验**
-- 装法见 `requirements.txt`（含上游拉取命令与当前 commit 号）
-- 基线：`pytest robot/tests -q -p no:cacheprovider` → 41 passed, 3 skipped
+- **已装齐**：mujoco 3.12.0 / pygame 2.6.1 / cyclonedds 11.0.1 / unitree_sdk2py 1.0.1
+  装法：`pip install mujoco pygame "cyclonedds==11.0.1"` +
+        `pip install -e robot/sim/unitree_sdk2_python --no-deps`
+- 重装的完整命令见 `requirements.txt`（含上游拉取命令与当前 commit 号）
+- 基线：`pytest robot/tests -q -p no:cacheprovider` → **85 passed, 0 skipped**（约 33s）
+
+## v1 低层行走不可用于导航（实测，别再抱幻想）
+
+走 1m × 4 次的航向漂移：1.4° / 19.9° / **163.2°** / **85.3°**。
+**trot 步态是开环的，航向一偏就一路偏下去 —— 不是"漂移"是"打转"。**
+→ 别在低层调步态做转弯/航向闭环，那是绕远路。等真机高层（小脑自带航向闭环）。
+→ 现有保护：横向预算 1.0m + 航向预算 30° + 二维到达判据，检测到只能**停下**，纠不回来。
 
 ## 规矩 / 教训
 
 - **测试钉必须反向验证**：写完回归测试后，把代码退回修复前的行为跑一遍，
   确认钉子会如期失败。第一版 P0-2 的探针测的是"阻塞结束后"而非"阻塞期间"，
-  退化代码照样通过 —— 是反向验证抓出来的。（2026-08-29 教训）
+  退化代码照样通过 —— 是反向验证抓出来的。
+- **物理仿真有随机性，别断言"必须走到"**：任何"走准了"的断言都会 flaky。
+  改断言"链路通 + 结局诚实 + 真的动了 + 没耗光超时"；
+  要钉确定路径就用**极小预算**强制触发（`move_to(max_lateral=0.01)`）；
+  "必然被拒"的目标要放**足够远**（窗边 y=3.0，放 1.5 会偶发成功）。
+- **`book()` 只设 `pending_task`，`activity` 仍是 None**：写"推到完成"的循环
+  必须**先 tick 一帧**，否则循环一次都不进（狗一动不动）。踩过三次。
 - **提交身份分辨不出人**：用 `-c user.name/-c user.email` 临时身份提交时，
   author 字段都一样，只能靠时间戳 + diff 内容核对。给不同执行者配不同 committer 名。
+- **软件急停是最后一道，永远不是第一道**：挡不住进程被杀/蓝屏/狗端死机/15kg 惯性。
+  上狗必读 `机器人/真机安全清单.md`。
