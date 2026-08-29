@@ -34,6 +34,8 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Tuple
 
+from robot.watchdog import LinkWatchdog
+
 # ── 闭环参数（真机到手后按实测调；现在的值是保守起步值）──────────
 
 
@@ -101,7 +103,8 @@ def connect_sport(nic: Optional[str] = None):
     return sc
 
 
-def sportmode_pose_source() -> Callable[[], Dict]:
+def sportmode_pose_source(
+        on_frame: Optional[Callable[[], None]] = None) -> Callable[[], Dict]:
     """订阅 rt/sportmodestate 拿位姿。
 
     ⚠ 未接真机验证过。已知要点：
@@ -119,6 +122,8 @@ def sportmode_pose_source() -> Callable[[], Dict]:
         latest["x"] = float(msg.position[0])
         latest["y"] = float(msg.position[1])
         latest["yaw"] = math.degrees(float(msg.imu_state.rpy[2]))
+        if on_frame is not None:                   # 给看门狗打卡
+            on_frame()
 
     sub = ChannelSubscriber("rt/sportmodestate", SportModeState_)
     sub.Init(_on, 10)
@@ -137,15 +142,25 @@ class RealSportEntity:
 
     def __init__(self, sport=None, pose: Optional[Callable[[], Dict]] = None,
                  nic: Optional[str] = None, cfg: DriveCfg = DriveCfg(),
-                 sleep: Callable[[float], None] = time.sleep) -> None:
+                 sleep: Callable[[float], None] = time.sleep,
+                 watchdog=None, link_timeout: float = 1.0) -> None:
         self.cfg = cfg
         self._sleep = sleep
         self._estop = False
         self._gripper = None
-        if sport is None or pose is None:          # 缺一样就得连真机
-            sport = sport or connect_sport(nic)
-            pose = pose or sportmode_pose_source()
-        self._sport = sport
+        self._sport: Optional[object] = None
+
+        # 自己去连真机 → 默认开链路看门狗（断线了狗不能一直走）。
+        # 注入假执行器 = 测试场景，默认不开（测试想验就自己传 watchdog=）。
+        self._standalone = sport is None or pose is None
+        self._wd = watchdog
+        if self._wd is None and self._standalone and link_timeout > 0:
+            self._wd = LinkWatchdog(timeout=link_timeout, on_trip=self._halt)
+
+        if self._standalone:
+            pose = pose or sportmode_pose_source(
+                on_frame=self._wd.beat if self._wd is not None else None)
+        self._sport = sport if sport is not None else connect_sport(nic)
         self._pose_src = pose
 
     # ── 协议：状态 ──
@@ -159,38 +174,44 @@ class RealSportEntity:
     # ── 协议：运动 ──
 
     def move_to(self, x: float, y: float, yaw: float = 0.0) -> bool:
-        """走到 (x, y, yaw)。到点 True；超时/卡住/急停 → 停下并诚实返回 False。"""
+        """走到 (x, y, yaw)。到点 True；超时/卡住/急停/断链 → 停下并诚实 False。
+
+        整个循环包在 try/finally：**任何异常都先把速度收掉再往外抛**。
+        高层 Move 是持续生效的 —— 循环一崩（异常、Ctrl+C）而没停，
+        狗就会带着最后一条速度一直走下去。
+        """
         if self._estop:
             return False
         cfg, t0 = self.cfg, time.perf_counter()
         last_dist: Optional[float] = None
         stuck = 0
-        while time.perf_counter() - t0 < cfg.timeout:
-            if self._estop:                        # 急停：发零速并撤
-                self._halt()
-                return False
-            cur = self.pose()
-            cmd = plan_drive(cur, x, y, yaw, cfg)
-            if cmd is None:                        # 到位
-                self._halt()
-                return True
-            self._send(*cmd)
-            dist = math.hypot(x - float(cur.get("x", 0.0)),
-                              y - float(cur.get("y", 0.0)))
-            # 卡住判据只在**真的在往前走**时才算（cmd[0] > 0）。
-            # 原地转向时位置本来就不变，那不是卡住；到点后调朝向同理。
-            if cmd[0] > 0:
-                if last_dist is not None and last_dist - dist < cfg.stuck_eps:
-                    stuck += 1                     # 推了但没靠近 → 撞墙 / 被卡
-                    if stuck >= cfg.stuck_frames:
-                        self._halt()
-                        return False
-                else:
-                    stuck = 0
-                last_dist = dist
-            self._sleep(cfg.dt)
-        self._halt()                               # 超时
-        return False
+        try:
+            while time.perf_counter() - t0 < cfg.timeout:
+                if self._estop:
+                    return False
+                if self._wd is not None and not self._wd.check():
+                    return False                   # 链路断了；check 里已收速
+                cur = self.pose()
+                cmd = plan_drive(cur, x, y, yaw, cfg)
+                if cmd is None:
+                    return True                    # 到位（finally 负责停）
+                self._send(*cmd)
+                dist = math.hypot(x - float(cur.get("x", 0.0)),
+                                  y - float(cur.get("y", 0.0)))
+                # 卡住判据只在**真的在往前走**时才算（cmd[0] > 0）。
+                # 原地转向时位置本来就不变，那不是卡住；到点后调朝向同理。
+                if cmd[0] > 0:
+                    if last_dist is not None and last_dist - dist < cfg.stuck_eps:
+                        stuck += 1                 # 推了但没靠近 → 撞墙 / 被卡
+                        if stuck >= cfg.stuck_frames:
+                            return False
+                    else:
+                        stuck = 0
+                    last_dist = dist
+                self._sleep(cfg.dt)
+            return False                           # 超时
+        finally:
+            self._halt()
 
     def navigate(self, waypoints) -> bool:
         for wp in waypoints or []:
@@ -219,6 +240,8 @@ class RealSportEntity:
 
     def _halt(self) -> None:
         """停下：优先 StopMove（狗自己的急停），兜底发零速。"""
+        if self._sport is None:                    # 还没连上，没什么可停的
+            return
         stop = getattr(self._sport, "StopMove", None)
         if callable(stop):
             try:
