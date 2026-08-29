@@ -25,5 +25,6 @@ def build_executor(kind: str = "sim", **kw):
         from robot.sim.dds_entity import DdsEntity
         return DdsEntity(**kw)    # DDS 电机级 + 物理仿真（v1 直线巡逻，见 dds_entity docstring）
     if kind == "real":
-        raise NotImplementedError("真机 SDK 桥为 M3（需授权/实物），见 架构.md 第 4 节")
+        from robot.real_sport import RealSportEntity
+        return RealSportEntity(**kw)   # 高层 SportClient；无真机会在连接处抛错
     raise ValueError(f"未知执行器类型：{kind}")
