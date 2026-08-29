@@ -123,6 +123,7 @@ class RobotBrain:
         self.activity: Optional[Dict] = None   # {"item", "steps", "desc"} 进行中的活动
         self.pending_task: Optional[Dict] = None
         self._blocked: Dict[str, int] = {}     # {动作: 冷却到第几 tick}
+        self._blocked_desc: Dict[str, str] = {}  # {动作: 失败时的描述} 用于如实回话
         self._tick = 0
 
     # ── 感知 ─────────────────────────────────────────
@@ -163,7 +164,11 @@ class RobotBrain:
             if not ok:
                 return False, reason
             if self._blocked.get(action, 0) > self._tick:
-                return False, f"{self._describe(task)}刚失败过，先缓缓。"
+                # 冷却是按**动作类型**计的，所以要报真正失败的那件事的描述，
+                # 不能拿当前这句话顶替（原来会说"去门口刚失败过"，
+                # 但实际失败的是"去桌边"，张冠李戴）。
+                what = self._blocked_desc.get(action) or self._describe(task)
+                return False, f"{what}刚失败过，先缓缓。"
             self.pending_task = task
             self.activity = None                   # 打断自主日常，听用户的
             self.state = "idle"
@@ -241,8 +246,9 @@ class RobotBrain:
             ok, reason = self.backend.apply(step["action"], step["params"])
             if not ok:
                 item = act["item"]
-                self._blocked[str(item.get("action", ""))] = \
-                    self._tick + BLOCK_AFTER_FAIL_TICKS
+                key = str(item.get("action", ""))
+                self._blocked[key] = self._tick + BLOCK_AFTER_FAIL_TICKS
+                self._blocked_desc[key] = act["desc"]
                 self.activity = None
                 self.state = "idle"
                 self.remember(f"{EV_FAIL}{act['desc']}（{reason}）", importance=4)

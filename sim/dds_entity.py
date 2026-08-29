@@ -25,8 +25,43 @@ WALK_DIR = -1.0          # 行走轴方向（世界系）：当前步态沿 -x
 TROT_HZ = 200.0          # lowcmd 下发频率
 STAND_SECONDS = 2.5      # 首次行动先起立（官方节奏）
 BURST_SECONDS = 1.5      # 每段 trot 时长（段间核对位姿）
-ARRIVE_TOL = 0.25        # 到点判据（米，x 轴）
+# 两个轴的能力完全不同，所以用两个容差：
+ARRIVE_TOL_X = 0.25      # 纵向（行走轴）：分段自适应能控住，实测误差 ~0.2m
+ARRIVE_TOL_Y = 0.8       # 横向：**v1 不会转向，这个轴根本控不了**
+                         # 实测走 2m 侧向漂 0.20 / 0.57 / 0.69（随机），
+                         # 所以 0.8 是**能力上限**，不是目标。
+                         # ⚠ 能转向之后必须收严到 0.25，并加航向闭环与横向纠偏。
+MAX_LATERAL = 1.0        # 横向超过这个就停下放弃（再走下去就是撞墙）
+MAX_YAW_DRIFT = 30.0     # 航向漂移上限（度）：转过头就停 —— 见下
 WALK_TIMEOUT = 15.0      # 单次 move_to 总时限
+
+
+def heading_drifted(pose: Dict, yaw0: float,
+                    budget: float = MAX_YAW_DRIFT) -> bool:
+    """航向漂出预算？这是**比横向位移更早**的失控信号。
+
+    实测（2026-08-29，4 次走 1m）：航向漂 1.4° / 19.9° / **163.2°** / **85.3°**。
+    最后那两次狗已经不是"走偏"，是在打转 —— 而等到横向位移超预算才发现，
+    它已经跑出去 3.6m 了。所以这里单独看航向，转过头立刻收。
+    """
+    d = abs(float(pose.get("yaw", 0.0)) - yaw0) % 360.0
+    return min(d, 360.0 - d) > budget
+
+
+def arrived(pose: Dict, x: float, y: float,
+            tol_x: float = ARRIVE_TOL_X, tol_y: float = ARRIVE_TOL_Y) -> bool:
+    """到点判据：**x 和 y 都要**在各自容差内。
+
+    2026-08-29 改：原来只看 x 轴，于是侧向漂了 1.2m 也照样算"到了"
+    （实测走 4m 漂 1.2m）。判据太松比没有判据更危险 —— 它会让上层以为一切正常。
+    """
+    return (abs(x - float(pose.get("x", 0.0))) <= tol_x
+            and abs(y - float(pose.get("y", 0.0))) <= tol_y)
+
+
+def drifted(pose: Dict, y: float, budget: float = MAX_LATERAL) -> bool:
+    """横向漂移是否超出预算。超了就别再走了 —— v1 不会转弯，走下去只会更偏。"""
+    return abs(float(pose.get("y", 0.0)) - y) > budget
 # 腿序 0-2 FL, 3-5 FR, 6-8 RL, 9-11 RR；对角小跑 = FL+RR 对 FR+RL
 PHASE = [0.0] * 3 + [math.pi] * 3 + [math.pi] * 3 + [0.0] * 3
 
@@ -65,36 +100,48 @@ class DdsEntity:
 
     # ── 协议：运动 ────────────────────────────────────
 
-    def move_to(self, x: float, y: float, yaw: float = 0.0) -> bool:
-        """直线走到 (x, y)：目标须在行走轴上（y 差 ≤0.6m 且方向沿 WALK_DIR），
-        否则 False（v1 还不会转弯）。走到 ARRIVE_TOL 内返回 True，超时 False。"""
+    def move_to(self, x: float, y: float, yaw: float = 0.0,
+                max_lateral: float = MAX_LATERAL) -> bool:
+        """直线走到 (x, y)：目标须在行走轴上（横向差 ≤ 预算且方向沿 WALK_DIR），
+        否则 False（v1 还不会转弯）。
+
+        走到 x/y 都进容差 → True。中途横向漂出预算 → **立刻停下**并返回 False
+        （v1 纠不回来，硬走只会更偏，别浪费剩下的 WALK_TIMEOUT）。超时同理。
+        """
         if self._estop:
             return False
         p = self.pose()
-        # 已经站在目标上 → 直接算到了。
+        # 已经站在目标上 → 直接算到了
         # （2026-08-29 修：原来没有这一档，"回充电桩"而狗已在桩边会被判成
         #   方向不对 → 返回 False → 记一条"没做成"，纯属冤枉。）
-        if abs(x - p["x"]) <= ARRIVE_TOL and abs(y - p["y"]) <= ARRIVE_TOL:
+        if arrived(p, x, y):
             return True
-        if abs(y - p["y"]) > 0.6 or (x - p["x"]) * WALK_DIR <= 0:
-            return False                      # 要转弯/掉头：v1 不会，诚实拒绝
+        if drifted(p, y, max_lateral) or (x - p["x"]) * WALK_DIR <= 0:
+            return False                      # 要转弯/掉头，或起始横向偏差已超预算
         if not self._stood:
             self._stand()
+        yaw0 = self.pose()["yaw"]      # 航向基准：走的过程中转过头就收
         t0 = time.perf_counter()
         while time.perf_counter() - t0 < WALK_TIMEOUT:
-            dist = abs(x - self.pose()["x"])
-            if dist <= ARRIVE_TOL:
+            cur = self.pose()
+            if arrived(cur, x, y):
                 return True
+            if heading_drifted(cur, yaw0):     # 打转了，比等位移偏更早发现
+                return False
+            if drifted(cur, y, max_lateral):   # 横向漂出预算：停下，诚实放弃
+                return False
             if self._estop:
                 return False
             # 分段长度按剩余距离自适应（远大步近小步，防过冲——不能倒着走回来）
+            dist = abs(x - cur["x"])
             self._trot(min(1.5, max(0.4, dist / 0.7 * 0.8)))
-        return abs(self.pose()["x"] - x) <= ARRIVE_TOL
+        return arrived(self.pose(), x, y)
 
-    def navigate(self, waypoints: List[Dict]) -> bool:
+    def navigate(self, waypoints: List[Dict],
+                 max_lateral: float = MAX_LATERAL) -> bool:
         for wp in waypoints:
             if not self.move_to(float(wp["x"]), float(wp.get("y", 0.0)),
-                                float(wp.get("yaw", 0.0))):
+                                float(wp.get("yaw", 0.0)), max_lateral):
                 return False
         return True
 
