@@ -1,7 +1,7 @@
 ﻿"""RobotBackend + SimEntity(stub) 冒烟 — 离线跑通落账后单步执行 + 安全闸。"""
-from robot.backend import RobotBackend
-from robot.safety import SafetyGate
-from robot.sim.stub import SimEntity
+from argos.backend import RobotBackend
+from argos.safety import SafetyGate
+from argos.sim.stub import SimEntity
 
 
 def test_backend_moves_and_poses():

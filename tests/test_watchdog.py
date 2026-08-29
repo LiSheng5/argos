@@ -9,8 +9,8 @@
 import math
 import time
 
-from robot.real_sport import DriveCfg, RealSportEntity
-from robot.watchdog import LinkWatchdog
+from argos.real_sport import DriveCfg, RealSportEntity
+from argos.watchdog import LinkWatchdog
 
 
 class Clock:

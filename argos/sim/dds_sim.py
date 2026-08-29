@@ -6,7 +6,7 @@
 自动探测）；导入桥前注入纯线程版 RecurrentThread（官方版依赖 Linux timerfd，
 Windows 直接炸，见 _install_recurrent_thread_shim）。上游文件一字不动。
 
-用法: python -m robot.sim.dds_sim    （Ctrl+C 停）
+用法: python -m argos.sim.dds_sim    （Ctrl+C 停）
 依赖: pip install pygame mujoco cyclonedds==11.0.1
       pip install -e sim/unitree_sdk2_python --no-deps   （跳过钉死的 cyclonedds==0.10.2）
 """

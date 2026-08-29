@@ -1,9 +1,9 @@
 """RobotBrain 自主循环冒烟 — 对照 Dagent 的 test_npc 风格：
 编译（B2）→ 落账（预审+白名单）→ tick 执行 → 记忆回流。
 """
-from robot.brain import (EV_DONE, EV_FAIL, MAX_MEMORY, RobotBrain,
+from argos.brain import (EV_DONE, EV_FAIL, MAX_MEMORY, RobotBrain,
                          compile_command)
-from robot.sim.stub import SimEntity
+from argos.sim.stub import SimEntity
 
 
 def _brain(**kw) -> RobotBrain:

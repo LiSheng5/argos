@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Dict, Optional, Tuple
 
-from robot.safety import SafetyGate
+from argos.safety import SafetyGate
 
 
 class ActionBackend:

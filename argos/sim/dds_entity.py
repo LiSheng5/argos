@@ -17,7 +17,7 @@ import math
 import time
 from typing import Dict, List, Optional
 
-from robot.sim.dds_sim import STAND_DOWN, STAND_UP, DdsSim
+from argos.sim.dds_sim import STAND_DOWN, STAND_UP, DdsSim
 
 # 实测步态参数（见模块 docstring）
 FREQ, AT, AC, KP, KD = 2.0, 0.25, 0.8, 80.0, 4.0

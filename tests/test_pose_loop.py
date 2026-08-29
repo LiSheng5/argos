@@ -9,7 +9,7 @@
 2. `drifted()` 加横向漂移预算：走的过程中偏出预算就停下诚实放弃
    （v1 不会转弯，硬走只会更偏，别把 WALK_TIMEOUT 全耗光）
 """
-from robot.sim.dds_entity import (ARRIVE_TOL_X, ARRIVE_TOL_Y, MAX_LATERAL,
+from argos.sim.dds_entity import (ARRIVE_TOL_X, ARRIVE_TOL_Y, MAX_LATERAL,
                                   MAX_YAW_DRIFT, WALK_DIR, arrived, drifted,
                                   heading_drifted)
 

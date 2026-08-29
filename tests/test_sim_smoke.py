@@ -3,7 +3,7 @@ import math
 
 import pytest
 
-from robot.executor import build_executor
+from argos.executor import build_executor
 
 pytest.importorskip("mujoco")
 

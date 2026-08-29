@@ -4,9 +4,9 @@ tick 循环在 lifespan 里，TestClient 不进 with 上下文则不启动（确
 """
 from fastapi.testclient import TestClient
 
-from robot.brain import RobotBrain
-from robot.server import build_app
-from robot.sim.stub import SimEntity
+from argos.brain import RobotBrain
+from argos.server import build_app
+from argos.sim.stub import SimEntity
 
 
 def _client() -> TestClient:

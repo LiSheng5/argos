@@ -17,16 +17,16 @@ import pytest
 pytest.importorskip("mujoco")
 pytest.importorskip("unitree_sdk2py")
 
-_ROOT = str(Path(__file__).resolve().parents[2])
+_ROOT = str(Path(__file__).resolve().parents[1])
 
 _CHILD = r'''
 import math
 import sys
 import time
 sys.path.insert(0, ".")
-from robot.brain import EV_DONE, EV_FAIL, RobotBrain
-from robot.executor import build_executor
-from robot.sim.dds_entity import MAX_LATERAL, WALK_TIMEOUT, arrived
+from argos.brain import EV_DONE, EV_FAIL, RobotBrain
+from argos.executor import build_executor
+from argos.sim.dds_entity import MAX_LATERAL, WALK_TIMEOUT, arrived
 
 # v1 只会沿 -x 走，所以三个地点全摆在负 x 轴上
 PLACES = {"充电桩": (0.0, 0.0, 0.0), "桌边": (-2.0, 0.0, 0.0), "门口": (-4.0, 0.0, 0.0)}

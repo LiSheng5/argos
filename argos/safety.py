@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from robot.primitives import ALLOWED_MOTION_ACTIONS, FORBIDDEN_MOTION_TOKENS
+from argos.primitives import ALLOWED_MOTION_ACTIONS, FORBIDDEN_MOTION_TOKENS
 
 # 工作空间可达边界（米）—— 示例值，真机按场地配置
 BOUNDARIES = {"x_min": -10.0, "x_max": 10.0, "y_min": -10.0, "y_max": 10.0}

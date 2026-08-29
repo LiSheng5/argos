@@ -10,7 +10,7 @@
 """
 import math
 
-from robot.real_sport import DriveCfg, RealSportEntity, _norm_deg, plan_drive
+from argos.real_sport import DriveCfg, RealSportEntity, _norm_deg, plan_drive
 
 
 def _norm(a: float) -> float:

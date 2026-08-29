@@ -14,12 +14,12 @@ import pytest
 pytest.importorskip("mujoco")
 pytest.importorskip("unitree_sdk2py")
 
-_ROOT = str(Path(__file__).resolve().parents[2])   # .../NPCSidekick（robot 包的上级）
+_ROOT = str(Path(__file__).resolve().parents[1])   # D:/ArgOS（argos 包的上级）
 
 
 def test_dds_lowcmd_stands_the_dog_up():
     r = subprocess.run(
-        [sys.executable, "-m", "robot.sim.dds_sim", "--selftest"],
+        [sys.executable, "-m", "argos.sim.dds_sim", "--selftest"],
         capture_output=True, text=True, timeout=120, cwd=_ROOT,
     )
     if "DDS_STAND_OK" not in r.stdout:

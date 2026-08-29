@@ -1,7 +1,7 @@
 """机器人服务器：把 brain 挂成 HTTP（模式复用 1_Dagent/npc/server.py，只读参考）。
 
-启动: python -m robot.server [--port 8766] [--executor sim|mujoco]
-      （或双击 robot/启动机器人服务器.bat）
+启动: python -m argos.server [--port 8766] [--executor sim|mujoco]
+      （或双击 启动ArgOS服务器.bat）
 安全: 仅绑定 127.0.0.1 + Origin 校验（本地单机工具，同 Dagent 规矩）。
 端点:
   POST /api/command {"text": "..."} → brain.try_command → {reply, ...状态}
@@ -20,8 +20,8 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 
-from robot.brain import RobotBrain
-from robot.executor import build_executor
+from argos.brain import RobotBrain
+from argos.executor import build_executor
 
 TICK_INTERVAL = 3.0   # 帧间隔（秒），环境变量 ROBOT_TICK_INTERVAL 可覆盖
 _DEFAULT_PORT = 8766  # 1_Dagent 大脑占 8765，机器人让一位
@@ -44,7 +44,7 @@ def _verify_origin(request: Request) -> None:
 
 
 def default_brain() -> RobotBrain:
-    """默认大脑：sim 执行器 + 记忆卡落盘 robot/store/robot_memory.json。"""
+    """默认大脑：sim 执行器 + 记忆卡落盘 argos/store/robot_memory.json。"""
     kind = os.environ.get("ROBOT_EXECUTOR", "sim")
     store = Path(__file__).resolve().parent / "store" / "robot_memory.json"
     return RobotBrain(executor=build_executor(kind), memory_path=store)
@@ -77,7 +77,7 @@ def build_app(brain: RobotBrain | None = None) -> FastAPI:
         yield
         task.cancel()
 
-    app = FastAPI(title="NPCSidekick robot", lifespan=_lifespan)
+    app = FastAPI(title="ArgOS", lifespan=_lifespan)
     app.state.brain = brain
 
     @app.post("/api/command", dependencies=[Depends(_verify_origin)])

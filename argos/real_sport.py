@@ -34,7 +34,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Tuple
 
-from robot.watchdog import LinkWatchdog
+from argos.watchdog import LinkWatchdog
 
 # ── 闭环参数（真机到手后按实测调；现在的值是保守起步值）──────────
 

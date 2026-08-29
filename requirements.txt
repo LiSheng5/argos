@@ -1,8 +1,8 @@
-# NPCSidekick robot 依赖清单（2026-08-29 补，评审 P0-3）
+# ArgOS 依赖清单（2026-08-29 补，评审 P0-3）
 #
 # 装法：
 #   python -m pip install -r requirements.txt
-#   python -m pip install -e sim/unitree_sdk2_python --no-deps     # 见下方说明
+#   python -m pip install -e argos/sim/unitree_sdk2_python --no-deps     # 见下方说明
 #
 # 分层：只跑"大脑 + stub 仿真"只需基础段；要物理仿真加 mujoco 段；
 # 要电机级 DDS 控制（会真走路）再加 DDS 段。
@@ -24,13 +24,13 @@ cyclonedds==11.0.1
 
 #   unitree_sdk2py 必须用 -e --no-deps 装：它把 cyclonedds 钉在 0.10.2，
 #   会跟上面的 11.0.1 打架，但 API 是兼容的。
-#     python -m pip install -e sim/unitree_sdk2_python --no-deps
+#     python -m pip install -e argos/sim/unitree_sdk2_python --no-deps
 
 # ── 4. 宇树官方上游（vendored，不进本仓库，按需拉取）────
 #   这两个目录自带 .git，已写进 .gitignore。重装的完整命令：
-#     git clone https://github.com/unitreerobotics/unitree_mujoco.git sim/unitree_mujoco
-#     git clone https://github.com/unitreerobotics/unitree_sdk2_python.git sim/unitree_sdk2_python
-#     python -m pip install -e sim/unitree_sdk2_python --no-deps
+#     git clone https://github.com/unitreerobotics/unitree_mujoco.git argos/sim/unitree_mujoco
+#     git clone https://github.com/unitreerobotics/unitree_sdk2_python.git argos/sim/unitree_sdk2_python
+#     python -m pip install -e argos/sim/unitree_sdk2_python --no-deps
 #   本机当前上游版本（换机器时对齐这两个 commit 最省事）：
 #     unitree_mujoco        ae6a840 (2026-06-04)
 #     unitree_sdk2_python   65691c8 (2026-07-21)

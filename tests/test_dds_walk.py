@@ -19,13 +19,13 @@ import pytest
 pytest.importorskip("mujoco")
 pytest.importorskip("unitree_sdk2py")
 
-_ROOT = str(Path(__file__).resolve().parents[2])
+_ROOT = str(Path(__file__).resolve().parents[1])
 
 _CHILD = r'''
 import sys
 sys.path.insert(0, ".")
-from robot.brain import RobotBrain, EV_DONE, EV_FAIL
-from robot.executor import build_executor
+from argos.brain import RobotBrain, EV_DONE, EV_FAIL
+from argos.executor import build_executor
 
 ex = build_executor("dds")     # v1 直线巡逻员：只会沿行走轴(-x)走，见 dds_entity docstring
 brain = RobotBrain(executor=ex, memory_path=None, routine=(),

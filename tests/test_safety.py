@@ -1,5 +1,5 @@
 ﻿"""机器人安全闸门 SafetyGate 测试 — 对应 npc 的 test_reviewer/test_security。"""
-from robot.safety import SafetyGate
+from argos.safety import SafetyGate
 
 
 def test_whitelist_rejects_unknown_action():

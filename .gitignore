@@ -9,5 +9,5 @@ store/                  # 记忆卡 robot_memory.json，服务启动时自动建
 
 # 宇树官方上游：自带 .git，体积大，不进本仓库。
 # 按 requirements.txt 第 4 节的命令重新拉取。
-sim/unitree_mujoco/
-sim/unitree_sdk2_python/
+argos/sim/unitree_mujoco/
+argos/sim/unitree_sdk2_python/

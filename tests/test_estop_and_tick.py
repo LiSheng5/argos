@@ -8,10 +8,10 @@ import asyncio
 import threading
 import time
 
-from robot.brain import EV_FAIL, RobotBrain
-from robot.safety import SafetyGate
-from robot.server import _tick_loop
-from robot.sim.stub import SimEntity
+from argos.brain import EV_FAIL, RobotBrain
+from argos.safety import SafetyGate
+from argos.server import _tick_loop
+from argos.sim.stub import SimEntity
 
 
 class SlowRobot(SimEntity):

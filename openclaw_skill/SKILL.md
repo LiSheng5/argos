@@ -10,7 +10,7 @@ description: >
 
 # NPCSidekick 机器狗
 
-本机大脑服务：`http://127.0.0.1:8766`（robot/server.py，FastAPI）。
+本机大脑服务：`http://127.0.0.1:8766`（argos/server.py，FastAPI）。
 狗认识的话只有四类：**去某地 / 巡逻 / 拿某物 / 放下**。地点表缺省有：
 充电桩、家（都在原点）、桌边、门口。
 
@@ -57,12 +57,12 @@ curl -s -X POST http://127.0.0.1:8766/api/estop -H "Content-Type: application/js
 | 可以动了 / 解除急停 | `POST /api/estop` `{"on":false}` |
 
 注意：地点表之外的地点（如"厨房"）狗不认识，会诚实拒绝；要加地点需改
-robot/brain.py 的 DEFAULT_PLACES（或建 brain 时传 places）。
+argos/brain.py 的 DEFAULT_PLACES（或建 brain 时传 places）。
 
 ## 故障处理
 
-- **连接被拒 / 超时**：大脑服务没开。让用户双击 `robot\启动机器人服务器.bat`
-  （或在本目录跑 `python -m robot.server`），然后再试。
+- **连接被拒 / 超时**：大脑服务没开。让用户双击 `启动ArgOS服务器.bat`
+  （或在本目录跑 `python -m argos.server`），然后再试。
 - **reply 含"急停"**：如实转述；用户要继续时先解除急停。
 - **reply 含"先缓缓"**：按铁律 3 处理。
 - **/api/state 里 `estop: true`**：狗趴窝中，此时任何移动请求都会被拒，

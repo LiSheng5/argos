@@ -1,4 +1,4 @@
-"""机器人大脑：Dagent NPC 自主循环的机器人版（简化移植，零 LLM、零新依赖）。
+"""ArgOS 机器人大脑：Dagent NPC 自主循环的机器人版（简化移植，零 LLM、零新依赖）。
 
 移植对照（1_Dagent/npc 只读参考，本包不 import 那边任何代码）：
   reviewer.compile_task（B2 编译）  → compile_command   一句话 → 任务单（机器人动词表）
@@ -21,11 +21,11 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from robot.backend import RobotBackend
-from robot.executor import build_executor
-from robot.perception import observe_text
-from robot.primitives import ALLOWED_MOTION_ACTIONS
-from robot.safety import NORMAL_BATT, SAFE_BATT, SafetyGate, battery_of
+from argos.backend import RobotBackend
+from argos.executor import build_executor
+from argos.perception import observe_text
+from argos.primitives import ALLOWED_MOTION_ACTIONS
+from argos.safety import NORMAL_BATT, SAFE_BATT, SafetyGate, battery_of
 
 # 记忆事件前缀（与 1_Dagent/npc/memory.py 同源措辞，机器人版单一出处）
 EV_DONE = "完成: "
