@@ -92,6 +92,13 @@ python -m pytest tests -q -p no:cacheprovider
 
 大脑层的"规划—执行—反思—记忆"系统源自作者自己的项目 NPCSidekick V4（尚未发布）；[NPCSidekick V3.2 已开源](https://github.com/LiSheng5/npcsidekick)（AI 游戏 NPC 框架，MIT）。
 
+## 致谢
+
+- **宇树科技**：开源 unitree_mujoco 仿真世界与 unitree_sdk2_python——没有官方开放的仿真与 SDK，这个项目无从起步
+- **Google DeepMind**：MuJoCo 物理引擎
+- **Eclipse Foundation**：CycloneDDS
+- **OpenClaw 社区**：技能规范
+
 ## 文档
 
 | 想看什么 | 读哪份 |
