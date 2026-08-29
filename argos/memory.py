@@ -1,6 +1,6 @@
-"""记忆检索与遗忘合并：NPCMemory（1_Dagent/npc/memory.py）的机器人版移植。
+"""记忆检索与遗忘合并：NPCMemory（1_NPCSidekick/npc/memory.py）的机器人版移植。
 
-移植对照（1_Dagent/npc/memory.py 只读参考，纯函数化，操作记忆卡列表）：
+移植对照（1_NPCSidekick/npc/memory.py 只读参考，纯函数化，操作记忆卡列表）：
   NPCMemory.retrieve   → retrieve(entries, query, top_k)
      加权公式（AI Town, MIT, a16z-infra）：recency×0.5 + relevance×3
      + importance×2 + 一跳关联加分；相关度取 max(原词命中, BM25)。

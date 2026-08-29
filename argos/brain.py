@@ -3,7 +3,7 @@
 LLM 可选：无 key 时纯规则（编译/措辞/反思全部规则兜底），有 key 时
 措辞与反思走 LLM（带 persona 性格）。铁律不变：LLM 只提议、代码决定执行。
 
-移植对照（1_Dagent/npc 只读参考，本包不 import 那边任何代码）：
+移植对照（1_NPCSidekick/npc 只读参考，本包不 import 那边任何代码）：
   reviewer.compile_task（B2 编译）  → compile_command   一句话 → 任务单（机器人动词表）
   book.guarded_book（三道门）       → RobotBrain.book   落账口：白名单 + 安全闸预审
   scheduler._tick_one（每tick一步） → RobotBrain.tick   玩家单 > 自主日常；失败冷却
@@ -33,7 +33,7 @@ from argos.persona import load_persona, system_prompt
 from argos.primitives import ALLOWED_MOTION_ACTIONS
 from argos.safety import NORMAL_BATT, SAFE_BATT, SafetyGate, battery_of
 
-# 记忆事件前缀（与 1_Dagent/npc/memory.py 同源措辞，机器人版单一出处）
+# 记忆事件前缀（与 1_NPCSidekick/npc/memory.py 同源措辞，机器人版单一出处）
 EV_DONE = "完成: "
 EV_FAIL = "没做成: "
 BLOCK_AFTER_FAIL_TICKS = 5   # 失败冷却 tick 数（Dagent scheduler 同款语义，按动作计）

@@ -1,4 +1,4 @@
-"""机器人服务器：把 brain 挂成 HTTP（模式复用 1_Dagent/npc/server.py，只读参考）。
+"""机器人服务器：把 brain 挂成 HTTP（模式复用 1_NPCSidekick/npc/server.py，只读参考）。
 
 启动: python -m argos.server [--port 8766] [--executor sim|mujoco]
       （或双击 启动ArgOS服务器.bat）
@@ -26,7 +26,7 @@ from argos.brain import RobotBrain
 from argos.executor import build_executor
 
 TICK_INTERVAL = 3.0   # 帧间隔（秒），环境变量 ROBOT_TICK_INTERVAL 可覆盖
-_DEFAULT_PORT = 8766  # 1_Dagent 大脑占 8765，机器人让一位
+_DEFAULT_PORT = 8766  # 1_NPCSidekick 大脑占 8765，机器人让一位
 
 # 同 Dagent：本地页面来源放行，其余 Origin 拒绝；无 Origin（curl/脚本）放行
 _ALLOWED_ORIGIN_PREFIXES = ("http://127.0.0.1", "http://localhost")
