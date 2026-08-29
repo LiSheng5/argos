@@ -1,7 +1,7 @@
 ﻿"""真机安全闸门 SafetyGate（对应 npc/reviewer.py 的 A 审查升级版）。
 不可绕过：所有 RobotExecutor 调用先过 check()；参照 Claudia 三级电量门控。
 
-2026-08-29 评审后修订（见 文档/代码评审_20260829.md）：
+2026-08-29 评审后修订：
   - P1-4：禁触字段扫描改为递归 —— 原来只扫 params.values() 顶层，
     navigate 的 waypoints 里嵌的 dict 是漏的；
   - P1-6：电量未知（执行器没上报 battery_pct）不再默认满电放行，

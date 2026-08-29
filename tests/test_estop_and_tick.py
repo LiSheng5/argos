@@ -2,7 +2,6 @@
 
 这些 bug 的共同点：stub 执行器是**瞬移**的，把所有跟时间有关的问题都藏起来了，
 所以这里的假执行器会真的耗时（仿 DdsEntity 那种"一个动作走十几秒"的长任务）。
-见 文档/代码评审_20260829.md。
 """
 import asyncio
 import threading
