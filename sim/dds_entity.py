@@ -71,6 +71,11 @@ class DdsEntity:
         if self._estop:
             return False
         p = self.pose()
+        # 已经站在目标上 → 直接算到了。
+        # （2026-08-29 修：原来没有这一档，"回充电桩"而狗已在桩边会被判成
+        #   方向不对 → 返回 False → 记一条"没做成"，纯属冤枉。）
+        if abs(x - p["x"]) <= ARRIVE_TOL and abs(y - p["y"]) <= ARRIVE_TOL:
+            return True
         if abs(y - p["y"]) > 0.6 or (x - p["x"]) * WALK_DIR <= 0:
             return False                      # 要转弯/掉头：v1 不会，诚实拒绝
         if not self._stood:
