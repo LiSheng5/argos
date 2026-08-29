@@ -3,9 +3,9 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
-# 运行时产物
-store/                  # 记忆卡 robot_memory.json，服务启动时自动建
-*.bad-*.json            # 坏记忆卡改名留证（brain._quarantine_memory）
+# 运行时产物：记忆卡 robot_memory.json（store/），坏卡改名留证（*.bad-*.json）
+store/
+*.bad-*.json
 
 # 密钥（未来接 LLM 用，铁律：绝不入 git）
 api_key*.txt

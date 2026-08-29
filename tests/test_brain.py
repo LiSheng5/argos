@@ -3,12 +3,34 @@
 """
 from argos.brain import (EV_DONE, EV_FAIL, MAX_MEMORY, RobotBrain,
                          compile_command)
+from argos.llm import LlmError
 from argos.sim.stub import SimEntity
+
+
+class _FakeLlm:
+    """假 LLM：记录调用、返回预设文本；disabled=True 走纯规则，fail=True 抛错。"""
+
+    def __init__(self, reply="汪！收到。", disabled=False, fail=False):
+        self.reply = reply
+        self.disabled = disabled
+        self.fail = fail
+        self.calls = []
+
+    def enabled(self):
+        return not self.disabled
+
+    def chat(self, system, user, max_tokens=80, temperature=0.7):
+        self.calls.append(user)
+        if self.fail:
+            raise LlmError("boom")
+        return self.reply
 
 
 def _brain(**kw) -> RobotBrain:
     kw.setdefault("executor", SimEntity())
     kw.setdefault("memory_path", None)
+    # 默认注入 disabled 假 LLM：测试永远不走真网络，行为=纯规则
+    kw.setdefault("llm", _FakeLlm(disabled=True))
     return RobotBrain(**kw)
 
 
@@ -213,3 +235,44 @@ def test_reflection_only_counts_unreflected():
     b.tick()                                   # 新增 5 分 < 18，不再触发
     assert len([e for e in b.memory
                 if e.get("kind") == "reflection"]) == n
+
+
+# ── LLM 措辞（有 key 时带性格；失败/未启用回退规则话术）──
+
+def test_llm_ack_with_persona_replaces_fallback():
+    llm = _FakeLlm(reply="汪！这就去门口。")
+    b = _brain(llm=llm)
+    assert b.try_command("去门口") == "汪！这就去门口。"
+    assert b.pending_task is not None          # 落账不受措辞影响
+    assert any("任务事实：去门口" in c for c in llm.calls)
+
+
+def test_llm_unknown_with_persona():
+    llm = _FakeLlm(reply="这个我不会，我只会走路和拿东西。")
+    b = _brain(llm=llm)
+    assert b.try_command("给我写个文件") == "这个我不会，我只会走路和拿东西。"
+    assert b.pending_task is None
+
+
+def test_llm_failure_falls_back_to_rule_wording():
+    b = _brain(llm=_FakeLlm(fail=True))
+    assert "好，我去门口。" in b.try_command("去门口")   # 规则话术兜底
+    assert "我不认识" in b.try_command("给我写个文件")
+
+
+def test_llm_reflect_when_enough_importance():
+    llm = _FakeLlm(reply="今天巡逻了两圈，都走完了。")
+    b = _brain(llm=llm)
+    b.memory.append({"content": "完成: 巡逻一圈", "importance": 9})
+    b.memory.append({"content": "完成: 去门口", "importance": 9})
+    ev = b.tick()
+    assert ev and ev.get("reflected") == "今天巡逻了两圈，都走完了。"
+    assert b.memory[-1]["kind"] == "reflection"
+
+
+def test_llm_reflect_failure_falls_back_to_rule_summary():
+    b = _brain(llm=_FakeLlm(fail=True))
+    b.memory.append({"content": "完成: 巡逻一圈", "importance": 9})
+    b.memory.append({"content": "完成: 去门口", "importance": 9})
+    ev = b.tick()
+    assert ev and "我最近做了这些事" in ev["reflected"]

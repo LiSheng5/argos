@@ -2,6 +2,8 @@
 
 启动: python -m argos.server [--port 8766] [--executor sim|mujoco]
       （或双击 启动ArgOS服务器.bat）
+LLM 可选：配好 ARGOS_API_KEY（或仓库根 api_key.txt）后，回复与反思自动带性格
+（argos/persona.json 可编辑）；无 key 纯规则，行为与旧版一致。
 安全: 仅绑定 127.0.0.1 + Origin 校验（本地单机工具，同 Dagent 规矩）。
 端点:
   POST /api/command {"text": "..."} → brain.try_command → {reply, ...状态}
@@ -93,7 +95,9 @@ def build_app(brain: RobotBrain | None = None) -> FastAPI:
         text = str((data or {}).get("text", "")).strip()
         if not text:
             raise HTTPException(status_code=400, detail="text 不能为空")
-        reply = brain.try_command(text)
+        # try_command 里 LLM 措辞可能耗时几秒到 20s，必须 to_thread，
+        # 否则事件循环被卡住期间急停按不进去（P0-2 同款教训）。
+        reply = await asyncio.to_thread(brain.try_command, text)
         return {"reply": reply, **brain.status()}
 
     @app.get("/api/state", dependencies=[Depends(_verify_origin)])

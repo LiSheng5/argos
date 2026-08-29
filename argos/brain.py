@@ -1,4 +1,7 @@
-"""ArgOS 机器人大脑：Dagent NPC 自主循环的机器人版（简化移植，零 LLM、零新依赖）。
+"""ArgOS 机器人大脑：Dagent NPC 自主循环的机器人版（简化移植，零新依赖）。
+
+LLM 可选：无 key 时纯规则（编译/措辞/反思全部规则兜底），有 key 时
+措辞与反思走 LLM（带 persona 性格）。铁律不变：LLM 只提议、代码决定执行。
 
 移植对照（1_Dagent/npc 只读参考，本包不 import 那边任何代码）：
   reviewer.compile_task（B2 编译）  → compile_command   一句话 → 任务单（机器人动词表）
@@ -23,7 +26,9 @@ from typing import Dict, List, Optional, Tuple
 
 from argos.backend import RobotBackend
 from argos.executor import build_executor
+from argos.llm import LlmClient, LlmError
 from argos.perception import observe_text
+from argos.persona import load_persona, system_prompt
 from argos.primitives import ALLOWED_MOTION_ACTIONS
 from argos.safety import NORMAL_BATT, SAFE_BATT, SafetyGate, battery_of
 
@@ -105,9 +110,14 @@ class RobotBrain:
     def __init__(self, executor=None, gate: Optional[SafetyGate] = None,
                  places: Optional[Dict[str, tuple]] = None,
                  routine=DEFAULT_ROUTINE, memory_path: Optional[str] = None,
-                 rng: Optional[random.Random] = None) -> None:
+                 rng: Optional[random.Random] = None,
+                 persona: Optional[Dict] = None,
+                 llm: Optional[LlmClient] = None) -> None:
         self.executor = executor if executor is not None else build_executor("sim")
         self.backend = RobotBackend(self.executor, gate=gate)
+        # 性格（可编辑 JSON）+ LLM 客户端（无 key 自动降级纯规则）
+        self.persona = persona if persona is not None else load_persona()
+        self.llm = llm if llm is not None else LlmClient()
         self.places = dict(DEFAULT_PLACES if places is None else places)
         self.routine = tuple(routine)
         self.rng = rng or random.Random()
@@ -176,14 +186,42 @@ class RobotBrain:
             return True, ""
 
     def try_command(self, text: str) -> str:
-        """对话接单：编译 → 落账，返回给用户的回复（诚实拒绝，不空头承诺）。"""
+        """对话接单：编译 → 落账，返回给用户的回复（诚实拒绝，不空头承诺）。
+
+        有 LLM（key 配好）时措辞带性格；LLM 失败/未启用 → 规则话术（现状行为）。
+        """
         task = compile_command(text, self.places)
         if task is None:
-            return "……这个我不认识。我只懂：去某地 / 巡逻 / 拿某物 / 放下。"
+            return self._llm_say(
+                "unknown",
+                f"主人对机器狗说：\"{text}\"\n"
+                "狗只懂这些动作：去某地 / 巡逻 / 拿某物 / 放下。\n"
+                "请以狗的口气回复：老实说自己听不懂，并提示主人能说的话。"
+            ) or "……这个我不认识。我只懂：去某地 / 巡逻 / 拿某物 / 放下。"
         ok, reason = self.book(task)
         if not ok:
-            return f"……这个我现在做不了（{reason}）。"
-        return self._ack(task)
+            return self._llm_say(
+                "refuse",
+                f"主人对机器狗说：\"{text}\"\n"
+                f"但这件事现在做不了，原因：{reason}\n"
+                "请以狗的口气简短回复：说明做不了和原因，不编造。"
+            ) or f"……这个我现在做不了（{reason}）。"
+        fallback = self._ack(task)
+        return self._llm_say(
+            "ack",
+            f"任务事实：{self._describe(task)}\n"
+            f"原版话术（可参考语气，不许改动任务事实）：{fallback}"
+        ) or fallback
+
+    def _llm_say(self, prompt: str, user: str) -> Optional[str]:
+        """LLM 措辞（带 persona 性格）；未启用或失败 → None（调用方走规则话术）。"""
+        if self.llm is None or not self.llm.enabled():
+            return None
+        try:
+            return self.llm.chat(system_prompt(self.persona), user,
+                                 max_tokens=80, temperature=0.7)
+        except LlmError:
+            return None
 
     def estop(self, on: bool = True) -> None:
         """急停/解除（评审 P0-1）：**不抢锁**，必须立刻生效。
@@ -407,12 +445,13 @@ class RobotBrain:
         return list(reversed(hits))[:top_k]
 
     def maybe_reflect(self) -> Optional[str]:
-        """反思归纳（Dagent memory_card.maybe_reflect 简版，规则兜底零 LLM）。
+        """反思归纳（Dagent memory_card.maybe_reflect 简版；LLM 可选）。
 
         触发: 未反思记忆的重要性之和 ≥ REFLECT_IMPORTANCE_THRESHOLD。
         产出 = 事实摘要（复述权重最高的 2 条，不发明新事实）；已归纳条目就地
         标记 reflected 不再重复；反思条本身不进候选；同文反思不重写（静默翻篇）。
-        返回反思文本；未触发 → None。
+        有 LLM 时用模型按 persona 风格归纳（铁律同规则版：只归纳给定事实），
+        LLM 失败 → 规则摘要。返回反思文本；未触发 → None。
         """
         cands = [e for e in self.memory
                  if not e.get("reflected") and not e.get("archived")
@@ -422,7 +461,8 @@ class RobotBrain:
                 sum(e.get("importance", 5) for e in cands) < REFLECT_IMPORTANCE_THRESHOLD:
             return None
         tops = sorted(cands, key=lambda e: e.get("importance", 0), reverse=True)[:2]
-        text = "我最近做了这些事：" + "；".join(t["content"] for t in tops)
+        text = self._llm_reflect(tops) or \
+            ("我最近做了这些事：" + "；".join(t["content"] for t in tops))
         if any(e.get("content") == text for e in self.memory):
             text = None                     # 同文不重写，只翻篇
         else:
@@ -433,6 +473,20 @@ class RobotBrain:
             e["reflected"] = True           # 这批已归纳，不再重复（Dagent 指针语义）
         self.save()
         return text
+
+    def _llm_reflect(self, entries: List[Dict]) -> Optional[str]:
+        """LLM 反思归纳；未启用或失败 → None（规则摘要兜底）。"""
+        if self.llm is None or not self.llm.enabled():
+            return None
+        user = ("这些是机器狗最近真实发生的事：\n"
+                + "\n".join(f"- {e['content']}" for e in entries)
+                + f"\n\n{self.persona['reflect_style']}\n"
+                  "铁律：只归纳给定事实，禁止添加新事件；两句话以内。")
+        try:
+            return self.llm.chat(system_prompt(self.persona), user,
+                                 max_tokens=100, temperature=0.5)
+        except LlmError:
+            return None
 
     def save(self) -> None:
         """记忆卡落盘；未配置 memory_path 则纯内存（测试/演示零副作用）。"""

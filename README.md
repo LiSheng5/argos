@@ -31,6 +31,23 @@ ArgOS 把"游戏 NPC 大脑"移植到了机器狗身上：文本指令 → 编�
 
 核心设计哲学：**LLM 只提议、代码决定执行**——所有动作必须命中运动原语白名单并过安全闸，LLM 零关节/零文件直控。
 
+## 性格（可选 LLM）
+
+无 key 时狗按规则话术回话；配好 key 后，回复与反思自动带上性格（`argos/persona.json` 直接编辑）：
+
+```bash
+set ARGOS_API_KEY=sk-xxx        # 或放仓库根 api_key.txt（已 gitignore）
+python -m argos.server --executor dds
+```
+
+| 层 | LLM 化 | 规则兜底 |
+|---|---|---|
+| 接单/拒绝/听不懂的回复 | 带 persona 性格 | 原版话术 |
+| 反思归纳 | 按 persona 风格归纳 | 规则事实摘要 |
+| 编译/落账/安全闸 | **永不 LLM 化**（铁律） | —— |
+
+LLM 断网/超时/无 key → 自动回退规则话术，狗永远不会哑巴。
+
 ## 快速开始
 
 ```bash
