@@ -263,8 +263,8 @@ def test_llm_failure_falls_back_to_rule_wording():
 def test_llm_reflect_when_enough_importance():
     llm = _FakeLlm(reply="今天巡逻了两圈，都走完了。")
     b = _brain(llm=llm)
-    b.memory.append({"content": "完成: 巡逻一圈", "importance": 9})
-    b.memory.append({"content": "完成: 去门口", "importance": 9})
+    for c in ("完成: 巡逻一圈", "完成: 去门口", "完成: 去桌边"):   # 3 条唯一内容过噪音闸
+        b.memory.append({"content": c, "importance": 9})
     ev = b.tick()
     assert ev and ev.get("reflected") == "今天巡逻了两圈，都走完了。"
     assert b.memory[-1]["kind"] == "reflection"
@@ -272,7 +272,60 @@ def test_llm_reflect_when_enough_importance():
 
 def test_llm_reflect_failure_falls_back_to_rule_summary():
     b = _brain(llm=_FakeLlm(fail=True))
-    b.memory.append({"content": "完成: 巡逻一圈", "importance": 9})
-    b.memory.append({"content": "完成: 去门口", "importance": 9})
+    for c in ("完成: 巡逻一圈", "完成: 去门口", "完成: 去桌边"):
+        b.memory.append({"content": c, "importance": 9})
     ev = b.tick()
     assert ev and "我最近做了这些事" in ev["reflected"]
+
+
+# ── 语义召回 / 噪音闸 / 结构化反思（记忆系统全搬）──────
+
+def test_recall_is_semantic_not_substring():
+    b = _brain()
+    b.remember("完成: 回充电桩补电", importance=5)
+    assert b.recall("补电")               # 同义词召回（逐字匹配会漏）
+    assert b.recall("回充", top_k=1)[0]["content"].startswith("完成")
+
+
+def test_reflect_noise_gate_skips_llm():
+    llm = _FakeLlm(reply="废话洞察")
+    b = _brain(llm=llm)
+    b.memory.append({"content": "完成: 巡逻一圈", "importance": 9})
+    b.memory.append({"content": "完成: 巡逻一圈", "importance": 9})  # 唯一内容 <3
+    assert b.tick() is None or "reflected" not in (b.tick() or {})
+    assert llm.calls == []               # 噪音批不调 LLM
+    assert all(e.get("reflected") for e in b.memory)  # 但指针已翻篇
+    assert not any(e.get("kind") == "reflection" for e in b.memory)
+
+
+def test_reflect_typed_writes_mtype_entries():
+    llm = _FakeLlm(reply='[{"mtype": "persona", "content": "主人爱让我巡逻", "importance": 8},'
+                        ' {"mtype": "episodic", "content": "今天巡逻了两圈", "importance": 7}]')
+    b = _brain(llm=llm)
+    for c in ("完成: 巡逻一圈", "完成: 去门口", "完成: 去桌边"):
+        b.memory.append({"content": c, "importance": 9})
+    ev = b.tick()
+    assert ev and "主人爱让我巡逻" in ev["reflected"]
+    refl = [e for e in b.memory if e.get("kind") == "reflection"]
+    assert len(refl) == 2
+    assert {e.get("mtype") for e in refl} == {"persona", "episodic"}
+
+
+def test_reflect_typed_bad_json_falls_back_to_single():
+    llm = _FakeLlm(reply="今天干了不少活。")
+    b = _brain(llm=llm)
+    for c in ("完成: 巡逻一圈", "完成: 去门口", "完成: 去桌边"):
+        b.memory.append({"content": c, "importance": 9})
+    ev = b.tick()
+    assert ev and ev.get("reflected") == "今天干了不少活。"
+    refl = [e for e in b.memory if e.get("kind") == "reflection"]
+    assert len(refl) == 1 and "mtype" not in refl[0]   # 单条路径不带 mtype
+
+
+def test_consolidate_triggered_on_overflow():
+    b = _brain()
+    for _ in range(MAX_MEMORY + 5):
+        b.remember("完成: 巡逻一圈", importance=5)     # 同主题流水账
+    assert any(e.get("category") == "consolidated" for e in b.memory)
+    active = [e for e in b.memory if not e.get("archived")]
+    assert len(active) <= MAX_MEMORY

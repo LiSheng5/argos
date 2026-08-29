@@ -27,6 +27,7 @@ from typing import Dict, List, Optional, Tuple
 from argos.backend import RobotBackend
 from argos.executor import build_executor
 from argos.llm import LlmClient, LlmError
+from argos.memory import consolidate, parse_typed_reflection, retrieve
 from argos.perception import observe_text
 from argos.persona import load_persona, system_prompt
 from argos.primitives import ALLOWED_MOTION_ACTIONS
@@ -112,12 +113,15 @@ class RobotBrain:
                  routine=DEFAULT_ROUTINE, memory_path: Optional[str] = None,
                  rng: Optional[random.Random] = None,
                  persona: Optional[Dict] = None,
-                 llm: Optional[LlmClient] = None) -> None:
+                 llm: Optional[LlmClient] = None,
+                 review_llm: Optional[LlmClient] = None) -> None:
         self.executor = executor if executor is not None else build_executor("sim")
         self.backend = RobotBackend(self.executor, gate=gate)
         # 性格（可编辑 JSON）+ LLM 客户端（无 key 自动降级纯规则）
         self.persona = persona if persona is not None else load_persona()
         self.llm = llm if llm is not None else LlmClient()
+        # 反思用 review 档模型（可独立配置），缺省复用主 llm
+        self.review_llm = review_llm
         self.places = dict(DEFAULT_PLACES if places is None else places)
         self.routine = tuple(routine)
         self.rng = rng or random.Random()
@@ -418,16 +422,24 @@ class RobotBrain:
 
     def remember(self, content: str, importance: int = 5) -> None:
         """记一条事件（接地约束同 Dagent：只记真实发生的事）。"""
-        self.memory.append({"content": content,
+        self.memory.append({"id": f"mem_{len(self.memory) + 1}_{int(time.time())}",
+                            "content": content,
                             "importance": max(0, min(9, int(importance))),
+                            "created_at": time.time(),
                             "at": time.strftime("%Y-%m-%d %H:%M:%S")})
         self._archive_overflow()
         self.save()
 
     def _archive_overflow(self) -> None:
-        """超限降级（Dagent housekeeper 的极简版）：最老的活跃条目标记 archived，
-        退出检索与反思；条目本身留在卡上永不物理删除（证据链红线）。"""
+        """超限治理：先遗忘合并（同主题并成一条 + 弱旧修剪），仍超再降级归档。
+
+        归档层红线不变：条目本身留在卡上永不物理删除；遗忘修剪只动
+        弱旧流水账（反思/合并/归档条目与高重要度 ≥8 免疫，见 memory.consolidate）。
+        """
         active = [e for e in self.memory if not e.get("archived")]
+        if len(active) > MAX_MEMORY:
+            consolidate(self.memory)
+            active = [e for e in self.memory if not e.get("archived")]
         overflow = len(active) - MAX_MEMORY
         if overflow > 0:
             for e in active[:overflow]:
@@ -439,19 +451,22 @@ class RobotBrain:
         return active[-n:]
 
     def recall(self, query: str, top_k: int = 3) -> List[Dict]:
-        """逐字召回（不编造）：命中关键词的最近活跃记忆，最新的在前。"""
-        hits = [e for e in self.memory
-                if not e.get("archived") and query and query in e["content"]]
-        return list(reversed(hits))[:top_k]
+        """语义召回（NPCMemory.retrieve 移植）：加权分 = recency×0.5 +
+        relevance×3（原词/同义词 + BM25）+ importance×2 + 一跳关联加分。
+        不编造：只返回卡上真实条目；archived 不参与。"""
+        return retrieve(self.memory, query, top_k=top_k)
 
     def maybe_reflect(self) -> Optional[str]:
-        """反思归纳（Dagent memory_card.maybe_reflect 简版；LLM 可选）。
+        """反思归纳（阶段① 海马体升级，Dagent memory_card.maybe_reflect 同款）。
 
         触发: 未反思记忆的重要性之和 ≥ REFLECT_IMPORTANCE_THRESHOLD。
-        产出 = 事实摘要（复述权重最高的 2 条，不发明新事实）；已归纳条目就地
-        标记 reflected 不再重复；反思条本身不进候选；同文反思不重写（静默翻篇）。
-        有 LLM 时用模型按 persona 风格归纳（铁律同规则版：只归纳给定事实），
-        LLM 失败 → 规则摘要。返回反思文本；未触发 → None。
+        铁律: 反思只准复述/归纳给定记忆里的事实，禁止编造（防 confabulation）。
+        闸2: 候选批唯一内容 <3 → 日常噪音，静默翻篇不调 LLM（防"总结垃圾产生垃圾"）。
+        typed（TDAM 三分类）: LLM 提炼 ≤3 条 persona/episodic/instruction，
+          解析失败/LLM 异常 → 无痕落回单条路径。
+        单条: LLM 归纳 1-2 条上层结论 → 无 LLM 规则摘要（只做事实摘要）。
+        闸2b: 产出与既有反思条同文 → 不重写，静默翻篇。
+        返回反思文本（多行=typed 多条）；未触发/全撞车 → None。
         """
         cands = [e for e in self.memory
                  if not e.get("reflected") and not e.get("archived")
@@ -460,31 +475,97 @@ class RobotBrain:
         if not cands or \
                 sum(e.get("importance", 5) for e in cands) < REFLECT_IMPORTANCE_THRESHOLD:
             return None
-        tops = sorted(cands, key=lambda e: e.get("importance", 0), reverse=True)[:2]
-        text = self._llm_reflect(tops) or \
-            ("我最近做了这些事：" + "；".join(t["content"] for t in tops))
-        if any(e.get("content") == text for e in self.memory):
-            text = None                     # 同文不重写，只翻篇
-        else:
-            self.memory.append({"content": text, "importance": 8,
-                                "kind": "reflection",
-                                "at": time.strftime("%Y-%m-%d %H:%M:%S")})
+        # 闸2：候选批唯一内容 <3 → 判定日常噪音，翻篇但不产废话洞察
+        if len({e.get("content", "") for e in cands}) < 3:
+            for e in cands:
+                e["reflected"] = True
+            self.save()
+            return None
+        facts = "\n".join(f"- {e['content']}" for e in cands)
+        texts: List[str] = []
+        if self._llm_on():
+            typed = self._reflect_typed(facts)
+            if typed is not None:
+                existing = {e.get("content") for e in self.memory
+                            if e.get("kind") == "reflection"}
+                fresh = [t for t in typed if t["content"] not in existing]
+                if fresh:
+                    now = time.time()
+                    for t in fresh:
+                        self.memory.append({
+                            "id": f"mem_{len(self.memory) + 1}_{int(now)}",
+                            "content": t["content"],
+                            "importance": t["importance"],
+                            "kind": "reflection", "mtype": t["mtype"],
+                            "created_at": now,
+                            "at": time.strftime("%Y-%m-%d %H:%M:%S")})
+                    texts = [t["content"] for t in fresh]
+                else:
+                    texts = []              # 闸2b：全部撞车 → 静默翻篇
+        if not texts:
+            text = self._llm_reflect(cands)
+            if text is None:                # 无 LLM → 规则摘要（复述权重最高 2 条）
+                tops = sorted(cands, key=lambda e: e.get("importance", 0),
+                              reverse=True)[:2]
+                text = "我最近做了这些事：" + "；".join(t["content"] for t in tops)
+            if any(e.get("content") == text for e in self.memory):
+                text = None                 # 闸2b：同文不重写，只翻篇
+            else:
+                now = time.time()
+                self.memory.append({
+                    "id": f"mem_{len(self.memory) + 1}_{int(now)}",
+                    "content": text, "importance": 8, "kind": "reflection",
+                    "created_at": now,
+                    "at": time.strftime("%Y-%m-%d %H:%M:%S")})
+                texts = [text]
         for e in cands:
             e["reflected"] = True           # 这批已归纳，不再重复（Dagent 指针语义）
         self.save()
-        return text
+        return "\n".join(texts) or None
+
+    def _llm_on(self) -> bool:
+        llm = self.review_llm or self.llm
+        return llm is not None and llm.enabled()
+
+    def _reflect_llm(self) -> LlmClient:
+        return self.review_llm or self.llm
 
     def _llm_reflect(self, entries: List[Dict]) -> Optional[str]:
-        """LLM 反思归纳；未启用或失败 → None（规则摘要兜底）。"""
-        if self.llm is None or not self.llm.enabled():
+        """LLM 归纳 1-2 条上层结论（只准基于给定事实，Dagent 同款 prompt）。"""
+        if not self._llm_on():
             return None
-        user = ("这些是机器狗最近真实发生的事：\n"
+        user = ("你是这个机器狗的自我反思。下面是它最近的真实经历记录（每条都是事实）：\n"
                 + "\n".join(f"- {e['content']}" for e in entries)
-                + f"\n\n{self.persona['reflect_style']}\n"
-                  "铁律：只归纳给定事实，禁止添加新事件；两句话以内。")
+                + "\n请归纳出 1-2 条更上层的结论（关于自己/主人/世界的认知），"
+                  "只能基于上面的事实，禁止编造没出现的细节；"
+                  f"语气按：{self.persona['reflect_style']}；每条一句话，用分号隔开。")
         try:
-            return self.llm.chat(system_prompt(self.persona), user,
-                                 max_tokens=100, temperature=0.5)
+            return self._reflect_llm().chat(
+                system_prompt(self.persona), user, max_tokens=120, temperature=0.5)
+        except LlmError:
+            return None
+
+    def _reflect_typed(self, facts: str) -> Optional[List[Dict]]:
+        """TDAM 三分类结构化反思；解析失败/LLM 异常 → None（无痕落回单条路径）。"""
+        if not self._llm_on():
+            return None
+        prompt = (
+            "你是这个机器狗的自我反思。下面是它最近的真实经历记录（每条都是事实）：\n"
+            f"{facts}\n"
+            "请提炼成最多 3 条结构化记忆，每条必须归入三类之一：\n"
+            "- persona：关于主人或自己的稳定特质/偏好/习惯\n"
+            "- episodic：客观发生的事件（做了什么/去了哪/结果如何）\n"
+            "- instruction：主人提出的长期要求或规矩\n"
+            "规则：只能基于上面的事实，禁止编造；每条一句话、独立完整；"
+            "宁缺毋滥，琐碎的不提；importance 为 0-9 整数"
+            "（核心正事 8-9，一般事件 5-7，琐碎 ≤4）。\n"
+            '只输出 JSON 数组，格式：'
+            '[{"mtype": "episodic", "content": "...", "importance": 6}]\n'
+            "不要输出 Markdown 代码块或其他任何文字。")
+        try:
+            raw = self._reflect_llm().chat(
+                system_prompt(self.persona), prompt, max_tokens=300, temperature=0.5)
+            return parse_typed_reflection(raw)
         except LlmError:
             return None
 
