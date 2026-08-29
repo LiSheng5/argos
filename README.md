@@ -90,7 +90,7 @@ python -m pytest tests -q -p no:cacheprovider
 | CycloneDDS | Eclipse 基金会 | DDS 底层传输 |
 | OpenClaw Skill 规范 | 开源社区 | 对外技能封装 |
 
-大脑层的"规划—执行—反思—记忆"系统源自作者自己的开源项目 [NPCSidekick](https://github.com/LiSheng5/npcsidekick)（AI 游戏 NPC 框架，MIT）。
+大脑层的"规划—执行—反思—记忆"系统源自作者自己的项目 NPCSidekick V4（尚未发布）；[NPCSidekick V3.2 已开源](https://github.com/LiSheng5/npcsidekick)（AI 游戏 NPC 框架，MIT）。
 
 ## 文档
 
