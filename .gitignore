@@ -15,3 +15,6 @@ api_key*.txt
 # 按 requirements.txt 第 4 节的命令重新拉取。
 argos/sim/unitree_mujoco/
 argos/sim/unitree_sdk2_python/
+
+# 项目书（申请文书，不公开，本地保留）
+文档/项目书*.md
