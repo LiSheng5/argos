@@ -6,7 +6,7 @@
 ArgOS 把"游戏 NPC 大脑"移植到了机器狗身上：文本指令 → 编译 → 落账 → 安全闸 → 执行 → 到点记账 → 记忆回流。大脑与执行器分离，真机到手只需换执行器，大脑一行不改。
 
 **诚实声明：**
-- ✅ 大脑层（编译/落账/安全/记忆/服务）在物理仿真里完整验证，85 项测试全绿
+- ✅ 大脑层（编译/落账/安全/记忆/服务）在物理仿真里完整验证，126 项测试全绿
 - ✅ 真机执行器（高层 SportClient + 闭环控制器 + 断链看门狗）代码与单测就绪
 - ❌ **尚未在真机上运行**——真机联调清单见 `文档/真机安全清单.md`
 - 部分代码与文档由 AI 工具辅助编写，实测数据全部来自真实运行
@@ -52,7 +52,8 @@ LLM 断网/超时/无 key → 自动回退规则话术，狗永远不会哑巴�
 
 | 能力 | 做法 |
 |---|---|
-| 语义检索 | recency + 相关度（原词/同义词族 + 真 BM25）+ 重要度 + 一跳关联，加权排序；可选温层向量锚点（chromadb，`ARGOS_VECTOR_ANCHOR=1`）与关键词路 RRF 融合 |
+| 语义检索 | recency + 相关度（原词/同义词族 + 真 BM25）+ 重要度 + 一跳关联，加权排序 |
+| 向量检索（可选） | 温层向量锚点（chromadb）：语义路与关键词路 RRF 倒数秩融合，模糊查询也能捞起相关记忆；`ARGOS_VECTOR_ANCHOR=1` 开启，不装 chromadb 自动降级关键词路 |
 | 反思归纳 | 重要事攒够 → LLM 归纳 1-2 条结论，或提炼三分类记忆（persona/episodic/instruction）；噪音批静默翻篇 |
 | 遗忘合并 | 同主题流水账并成一条 consolidated；弱旧记忆按 72h 半衰期淡出 |
 | 铁律 | 反思/合并/归档条目永不物理删除；记忆卡 = 可编辑 JSON（改文件即改记忆） |
@@ -61,6 +62,7 @@ LLM 断网/超时/无 key → 自动回退规则话术，狗永远不会哑巴�
 
 ```bash
 pip install -r requirements.txt
+pip install chromadb jieba                  # 可选：向量检索 + 中文切词增强
 python -m argos.server --executor sim      # 纯逻辑仿真，零硬件依赖
 # 或双击 启动ArgOS服务器.bat
 
@@ -77,7 +79,7 @@ python -m argos.server --executor dds
 
 ```bash
 python -m pytest tests -q -p no:cacheprovider
-# 85 passed, 0 skipped
+# 126 passed, 0 skipped
 ```
 
 ## 站在哪些开源肩膀上
