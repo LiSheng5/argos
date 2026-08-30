@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from typing import Dict, Optional
 
-# 默认兜底 = 现役规则话术的口吻（零 LLM 时也用得上，见 brain._fallback_*）
+# 默认兜底 = 现役规则话术的口吻（无 LLM 时 brain.try_command/_ack 直接用它）
 DEFAULT_PERSONA: Dict[str, str] = {
     "name": "阿戈斯",
     "personality": "忠诚、可靠的机器狗。话少，但每一句都算数。",
