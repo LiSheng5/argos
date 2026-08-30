@@ -25,6 +25,13 @@ try:   # 可选依赖: pip install jieba 后自动启用（缺失不影响启动
 except ImportError:   # pragma: no cover
     jieba = None  # type: ignore
 
+try:   # 可选依赖: pip install chromadb 后温层向量锚点可用（缺失不影响启动）
+    import chromadb  # type: ignore
+    from chromadb.config import Settings as ChromaSettings  # type: ignore
+    HAS_CHROMADB = True
+except ImportError:   # pragma: no cover
+    HAS_CHROMADB = False
+
 # AI Town 记忆加权参数 (MIT, a16z-infra) — 见模块 docstring
 _GW = (0.5, 3, 2)          # (recency, relevance, importance) 权重
 _DECAY = 0.99              # 每小时衰减
@@ -60,6 +67,125 @@ _ASSOCIATION_WEIGHT = 0.8
 _HALF_LIFE_HOURS = 72.0
 
 _PUNCT = ("，", "。", "？", "！", "、", "；", "：", ",", ".", "?", "!", ";", ":")
+
+# ── 温层向量锚点（NPC_VECTOR_ANCHOR 的机器人版，默认关，零接触零开销）──
+# ARGOS_VECTOR_ANCHOR=1 且 chromadb 已装 → 语义路与关键词路 RRF 融合；
+# 开关关 / 未装 chromadb / 任何故障 → None（优雅降级，行为与旧版一致）。
+
+
+class VectorAnchor:
+    """ChromaDB 极简封装：add/upsert 入索引、search 出 {text: score}、delete 出索引。
+
+    chromadb 未安装或初始化失败 → available=False，所有操作空转（零惩罚哲学）。
+    """
+
+    def __init__(self, persist_dir: str):
+        self._available = False
+        self._collection = None
+        if not HAS_CHROMADB:
+            return
+        try:
+            import logging
+            logging.getLogger("chromadb").setLevel(logging.WARNING)
+            logging.getLogger("chromadb.telemetry").setLevel(logging.ERROR)
+            import os
+            os.makedirs(persist_dir, exist_ok=True)
+            client = chromadb.PersistentClient(
+                path=persist_dir,
+                settings=ChromaSettings(anonymized_telemetry=False))
+            self._collection = client.get_or_create_collection(
+                name="argos_memory", metadata={"hnsw:space": "cosine"})
+            self._available = True
+        except Exception:
+            self._available = False
+
+    @property
+    def available(self) -> bool:
+        return self._available and self._collection is not None
+
+    def count(self) -> int:
+        if not self.available:
+            return 0
+        return self._collection.count()
+
+    def add(self, doc_id: str, text: str, metadata: Optional[Dict] = None) -> None:
+        """添加或更新单个文档（upsert 语义）。"""
+        if not self.available or not (text or "").strip():
+            return
+        try:
+            self._collection.upsert(
+                ids=[doc_id], documents=[text],
+                metadatas=[{k: str(v)[:200] for k, v in (metadata or {}).items()}])
+        except Exception:
+            pass
+
+    def add_batch(self, items) -> None:
+        """批量添加。每项: (doc_id, text, metadata)。"""
+        if not self.available or not items:
+            return
+        ids, docs, metas = [], [], []
+        for doc_id, text, meta in items:
+            if not (text or "").strip():
+                continue
+            ids.append(doc_id)
+            docs.append(text)
+            metas.append({k: str(v)[:200] for k, v in (meta or {}).items()})
+        if ids:
+            try:
+                self._collection.upsert(ids=ids, documents=docs, metadatas=metas)
+            except Exception:
+                pass
+
+    def search(self, query: str, top_k: int = 8,
+               threshold: float = 0.35) -> Dict[str, float]:
+        """语义搜索 → {text: similarity}（cosine，低于阈值不收）。"""
+        if not self.available or not query.strip():
+            return {}
+        try:
+            raw = self._collection.query(
+                query_texts=[query],
+                n_results=min(top_k, max(1, self._collection.count())))
+        except Exception:
+            return {}
+        out: Dict[str, float] = {}
+        if not raw.get("ids") or not raw["ids"][0]:
+            return out
+        for i, doc_id in enumerate(raw["ids"][0]):
+            doc = (raw.get("documents") or [[""]])[0][i]
+            dist = (raw.get("distances") or [[1.0]])[0][i]
+            score = 1.0 - float(dist)         # cosine distance → similarity
+            if score >= threshold and doc:
+                out[doc] = score
+        return out
+
+    def delete(self, doc_id: str) -> None:
+        if not self.available:
+            return
+        try:
+            self._collection.delete(ids=[doc_id])
+        except Exception:
+            pass
+
+
+def _rrf_fuse(scored: List[tuple], sem: Dict[str, float]) -> List[tuple]:
+    """RRF 倒数秩融合（k=60，对齐 TDAM）。
+
+    关键词路（加权总分+BM25）与向量语义路各自排名，融合分 =
+    1/(k+rank_kw) + 1/(k+rank_sem)；语义未命中的条目取最末秩(len+1)。
+    rank 均 1-based。两条路的名次对等融合，向量分数绝对值不压过关键词排序。
+    """
+    k = 60.0
+    kw_order = sorted(scored, key=lambda x: x[0], reverse=True)
+    kw_rank = {_entry_id(e, i): i for i, (_, e) in enumerate(kw_order, 1)}
+    worst = len(scored) + 1
+    sem_sorted = [e for _, e in sorted(
+        scored, key=lambda p: sem.get(p[1].get("content", ""), 0.0),
+        reverse=True)]
+    sem_rank = {_entry_id(e, i): i for i, e in enumerate(sem_sorted, 1)
+                if sem.get(e.get("content", ""), 0.0) > 0}
+    return [(1.0 / (k + kw_rank[_entry_id(e, i)]) +
+             1.0 / (k + sem_rank.get(_entry_id(e, i), worst)), e)
+            for i, (_, e) in enumerate(scored)]
 
 # ── TDAM 三分类（结构化反思用，与 category 生命周期维度正交）──
 MTYPES = ("persona", "episodic", "instruction")
@@ -185,11 +311,14 @@ def _entry_time(entry: Dict, now: float) -> float:
         return 0.0
 
 
-def retrieve(entries: List[Dict], query: str = "", top_k: int = 5) -> List[Dict]:
+def retrieve(entries: List[Dict], query: str = "", top_k: int = 5,
+             anchor=None) -> List[Dict]:
     """加权检索 + 一跳关联（阶段② 轻量海马体）。
 
     score = recency×0.5 + relevance×3 + importance×2 + 关联加分；
     relevance = max(原词/同义词命中, BM25)；archived 不参与检索。
+    anchor（温层向量锚点，可选）可用时：语义路与关键词路 RRF 倒数秩融合，
+    关键词召不动的模糊查询（如"时间"）能被语义路捞起；anchor=None → 零变化。
     """
     now = time.time()
     active = [e for e in entries if not _archived(e)]
@@ -235,12 +364,20 @@ def retrieve(entries: List[Dict], query: str = "", top_k: int = 5) -> List[Dict]
         scored.append((score, e))
     if not any_hit:      # 毫不相关 → 空（诚实：没有相关记忆，不塞无关条目）
         return []
+    # 温层向量锚点：语义路与关键词路 RRF 倒数秩融合
+    try:
+        if anchor is not None and getattr(anchor, "available", False):
+            sem = anchor.search(query, top_k=8)
+            if sem:
+                scored = _rrf_fuse(scored, sem)
+    except Exception:
+        pass
     scored.sort(key=lambda x: x[0], reverse=True)
     return [e for _, e in scored[:top_k]]
 
 
 def consolidate(entries: List[Dict], min_group: int = 3,
-                prune_strength: float = 1.0) -> int:
+                prune_strength: float = 1.0, anchor=None) -> int:
     """遗忘合并（阶段③）: 重复主题合并成一条 + 弱旧记忆修剪。
 
     - 合并: 同主题(规范词交集)的非反思记忆 ≥ min_group 条 → 合并成一条
@@ -248,10 +385,12 @@ def consolidate(entries: List[Dict], min_group: int = 3,
     - 修剪: 强度 = importance × 0.5^(小时/半衰期)，低于 prune_strength 的
       旧条目移除；反思/合并/归档条目与高重要度(≥8)免疫。
     - archived 永不参与也不被卷走（证据链红线）。
+    - anchor 可用时：被合并/修剪的条目同步出索引。
     - 返回被移除（含被合并）的条目数。原地修改列表。
     """
     now = time.time()
     removed = 0
+    ids_before = [e.get("id") for e in entries]
     # ── 1. 同主题合并 ──
     groups: Dict[frozenset, List[int]] = {}
     for i, e in enumerate(entries):
@@ -297,4 +436,12 @@ def consolidate(entries: List[Dict], min_group: int = 3,
         else:
             removed += 1
     entries[:] = keep
+    # 温层向量锚点：被合并/修剪的条目同步出索引
+    try:
+        if anchor is not None and getattr(anchor, "available", False):
+            gone = set(ids_before) - {e.get("id") for e in entries}
+            for gid in sorted(g for g in gone if g):
+                anchor.delete(gid)
+    except Exception:
+        pass
     return removed

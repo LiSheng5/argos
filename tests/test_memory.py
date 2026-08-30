@@ -126,3 +126,59 @@ def test_parse_typed_reflection_unknown_mtype_defaults():
     raw = '[{"mtype": "weird", "content": "x", "importance": 99}]'
     out = parse_typed_reflection(raw)
     assert out and out[0]["mtype"] == "episodic" and out[0]["importance"] == 9
+
+
+# ── 温层向量锚点（RRF 融合，假 anchor 注入，不依赖真 chromadb）──
+
+class _FakeAnchor:
+    """假向量锚点：search 返回预设 {text: score}。"""
+
+    def __init__(self, results=None, available=True):
+        self.results = results or {}
+        self.available = available
+        self.deleted = []
+
+    def search(self, query, top_k=8):
+        return dict(self.results)
+
+    def add(self, doc_id, text, metadata=None):
+        pass
+
+    def delete(self, doc_id):
+        self.deleted.append(doc_id)
+
+
+def test_retrieve_anchor_rrf_boosts_semantic_hit():
+    """关键词路无命中分数相近时，语义路的排名把目标条目顶上来。"""
+    entries = [_mem("完成: 去门口", importance=5),
+               _mem("完成: 去桌边", importance=5),
+               _mem("完成: 巡逻一圈", importance=5)]
+    # 语义路认为"桌边"最像（0.9），关键词路三者几乎同分 → RRF 后桌边第一
+    anchor = _FakeAnchor({"完成: 去桌边": 0.9})
+    hits = retrieve(entries, "桌子", top_k=1, anchor=anchor)
+    assert hits and hits[0]["content"] == "完成: 去桌边"
+
+
+def test_retrieve_anchor_none_zero_change():
+    entries = [_mem("完成: 去门口", importance=5),
+               _mem("完成: 巡逻一圈", importance=9)]
+    a = retrieve(entries, "巡逻", top_k=2, anchor=None)
+    b = retrieve(entries, "巡逻", top_k=2,
+                 anchor=_FakeAnchor(available=False))
+    assert [e["content"] for e in a] == [e["content"] for e in b]
+
+
+def test_consolidate_anchor_syncs_deletes():
+    entries = [_mem("完成: 巡逻一圈", importance=5),
+               _mem("没做成: 巡逻一圈", importance=4),
+               _mem("完成: 巡逻一圈", importance=5)]
+    anchor = _FakeAnchor()
+    consolidate(entries, anchor=anchor)
+    assert len(anchor.deleted) == 3       # 3 条被合并 → 全部出索引
+
+
+def test_consolidate_anchor_none_ok():
+    entries = [_mem("完成: 巡逻一圈", importance=5),
+               _mem("完成: 巡逻一圈", importance=5),
+               _mem("完成: 巡逻一圈", importance=5)]
+    assert consolidate(entries, anchor=None) == 3

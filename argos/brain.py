@@ -18,6 +18,7 @@ SafetyGate（不可绕过），本模块落账前的预审只是第一道。
 from __future__ import annotations
 
 import json
+import os
 import random
 import threading
 import time
@@ -27,7 +28,8 @@ from typing import Dict, List, Optional, Tuple
 from argos.backend import RobotBackend
 from argos.executor import build_executor
 from argos.llm import LlmClient, LlmError
-from argos.memory import consolidate, parse_typed_reflection, retrieve
+from argos.memory import (VectorAnchor, consolidate, parse_typed_reflection,
+                          retrieve)
 from argos.perception import observe_text
 from argos.persona import load_persona, system_prompt
 from argos.primitives import ALLOWED_MOTION_ACTIONS
@@ -114,7 +116,9 @@ class RobotBrain:
                  rng: Optional[random.Random] = None,
                  persona: Optional[Dict] = None,
                  llm: Optional[LlmClient] = None,
-                 review_llm: Optional[LlmClient] = None) -> None:
+                 review_llm: Optional[LlmClient] = None,
+                 anchor_dir: Optional[str] = None,
+                 injected_anchor=None) -> None:
         self.executor = executor if executor is not None else build_executor("sim")
         self.backend = RobotBackend(self.executor, gate=gate)
         # 性格（可编辑 JSON）+ LLM 客户端（无 key 自动降级纯规则）
@@ -127,6 +131,13 @@ class RobotBrain:
         self.rng = rng or random.Random()
         self.memory_path = Path(memory_path) if memory_path else None
         self.memory: List[Dict] = []
+        # 温层向量锚点（ARGOS_VECTOR_ANCHOR=1 且 chromadb 已装才启用）：
+        # 持久目录随记忆卡走；注入实例优先（测试）
+        self._anchor_dir = anchor_dir
+        self._injected_anchor = injected_anchor
+        self._anchor_tried = False
+        self._anchor_vs = None
+        self._backfilled = False
         # 并发保护（评审 P0-2）：tick 在线程里跑且可能耗时十几秒，
         # /api/command 在主线程推进同一份状态。急停路径刻意不抢这把锁 ——
         # 它必须立刻生效，不能排在长动作后面。
@@ -422,13 +433,54 @@ class RobotBrain:
 
     def remember(self, content: str, importance: int = 5) -> None:
         """记一条事件（接地约束同 Dagent：只记真实发生的事）。"""
-        self.memory.append({"id": f"mem_{len(self.memory) + 1}_{int(time.time())}",
-                            "content": content,
-                            "importance": max(0, min(9, int(importance))),
-                            "created_at": time.time(),
-                            "at": time.strftime("%Y-%m-%d %H:%M:%S")})
+        entry = {"id": f"mem_{len(self.memory) + 1}_{int(time.time())}",
+                 "content": content,
+                 "importance": max(0, min(9, int(importance))),
+                 "created_at": time.time(),
+                 "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+        self.memory.append(entry)
         self._archive_overflow()
+        # 温层向量锚点：同步入语义索引（开关关/不可用时静默跳过）
+        vs = self._anchor()
+        if vs is not None:
+            try:
+                vs.add(entry["id"], content,
+                       {"importance": entry["importance"]})
+            except Exception:
+                pass
         self.save()
+
+    def _anchor(self):
+        """温层向量锚点存取口（ARGOS_VECTOR_ANCHOR=1 时启用）。
+
+        注入实例优先（测试）；否则惰性构建 VectorAnchor（chromadb 未装 → None）。
+        首次命中且索引为空 → 批量回填既有记忆（旧卡自愈迁移）。任何故障 → None。
+        """
+        if not os.environ.get("ARGOS_VECTOR_ANCHOR", "").strip():
+            return None          # 家规开关: 默认关 —— 关闭时零接触零开销
+        if not self._anchor_tried:
+            self._anchor_tried = True
+            vs = self._injected_anchor
+            if vs is None:
+                try:
+                    if self._anchor_dir:
+                        vs = VectorAnchor(self._anchor_dir)
+                except Exception:
+                    vs = None
+            self._anchor_vs = vs
+        vs = self._anchor_vs
+        if vs is None or not getattr(vs, "available", False):
+            return None
+        if not self._backfilled:
+            self._backfilled = True
+            try:
+                if vs.count() == 0 and self.memory:
+                    vs.add_batch([(e.get("id"), e.get("content", ""),
+                                   {"importance": e.get("importance", 5)})
+                                  for e in self.memory])
+            except Exception:
+                pass
+        return vs
 
     def _archive_overflow(self) -> None:
         """超限治理：先遗忘合并（同主题并成一条 + 弱旧修剪），仍超再降级归档。
@@ -438,7 +490,7 @@ class RobotBrain:
         """
         active = [e for e in self.memory if not e.get("archived")]
         if len(active) > MAX_MEMORY:
-            consolidate(self.memory)
+            consolidate(self.memory, anchor=self._anchor())
             active = [e for e in self.memory if not e.get("archived")]
         overflow = len(active) - MAX_MEMORY
         if overflow > 0:
@@ -453,8 +505,9 @@ class RobotBrain:
     def recall(self, query: str, top_k: int = 3) -> List[Dict]:
         """语义召回（NPCMemory.retrieve 移植）：加权分 = recency×0.5 +
         relevance×3（原词/同义词 + BM25）+ importance×2 + 一跳关联加分。
-        不编造：只返回卡上真实条目；archived 不参与。"""
-        return retrieve(self.memory, query, top_k=top_k)
+        不编造：只返回卡上真实条目；archived 不参与。
+        温层向量锚点开启时，语义路与关键词路 RRF 融合。"""
+        return retrieve(self.memory, query, top_k=top_k, anchor=self._anchor())
 
     def maybe_reflect(self) -> Optional[str]:
         """反思归纳（阶段① 海马体升级，Dagent memory_card.maybe_reflect 同款）。

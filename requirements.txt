@@ -17,6 +17,10 @@ pytest>=8.0
 mujoco>=3.0
 pygame>=2.5            # unitree_mujoco 官方桥依赖
 
+# ── 2.5 可选增强：装不装都能跑，检索自动降级 ──────────
+#   pip install chromadb      # 温层向量锚点（ARGOS_VECTOR_ANCHOR=1 时启用）
+#   pip install jieba         # 中文切词增强
+
 # ── 3. DDS 电机级控制：--executor dds 需要 ────────────
 #   评审复核过：cyclonedds 11.0.1 在 Py3.13 / Windows 上 pip 直装可用，
 #   不需要源码编译（sim/run_sim.py 里的旧说明已过时）。

@@ -329,3 +329,53 @@ def test_consolidate_triggered_on_overflow():
     assert any(e.get("category") == "consolidated" for e in b.memory)
     active = [e for e in b.memory if not e.get("archived")]
     assert len(active) <= MAX_MEMORY
+
+
+# ── 温层向量锚点（brain 接线：开关/回填/融合）──────────
+
+class _FakeAnchor:
+    def __init__(self, results=None):
+        self.results = results or {}
+        self.available = True
+        self._count = 0
+        self.added = []
+        self.batched = []
+
+    def count(self):
+        return self._count
+
+    def search(self, query, top_k=8):
+        return dict(self.results)
+
+    def add(self, doc_id, text, metadata=None):
+        self.added.append((doc_id, text))
+
+    def add_batch(self, items):
+        self.batched.extend(items)
+
+    def delete(self, doc_id):
+        pass
+
+
+def test_anchor_off_by_default(monkeypatch):
+    monkeypatch.delenv("ARGOS_VECTOR_ANCHOR", raising=False)
+    b = _brain()
+    assert b._anchor() is None              # 家规开关默认关
+
+
+def test_anchor_on_injects_and_backfills(monkeypatch):
+    monkeypatch.setenv("ARGOS_VECTOR_ANCHOR", "1")
+    b = _brain(injected_anchor=_FakeAnchor())
+    b.remember("完成: 去门口", importance=5)
+    assert b._anchor() is not None
+    assert any("完成: 去门口" in t for _, t in b._anchor().added)
+
+
+def test_recall_uses_anchor_fusion(monkeypatch):
+    monkeypatch.setenv("ARGOS_VECTOR_ANCHOR", "1")
+    anchor = _FakeAnchor({"完成: 去桌边": 0.9})
+    b = _brain(injected_anchor=anchor)
+    for c in ("完成: 去门口", "完成: 去桌边", "完成: 巡逻一圈"):
+        b.remember(c, importance=5)
+    hits = b.recall("桌子", top_k=1)
+    assert hits and hits[0]["content"] == "完成: 去桌边"
