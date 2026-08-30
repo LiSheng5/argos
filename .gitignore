@@ -16,5 +16,5 @@ api_key*.txt
 argos/sim/unitree_mujoco/
 argos/sim/unitree_sdk2_python/
 
-# 项目书（申请文书，不公开，本地保留）
-文档/项目书*.md
+# 项目书（申请文书，不公开，本地保留；md 源稿 / html 排版 / pdf 成品都不进库）
+文档/项目书*
