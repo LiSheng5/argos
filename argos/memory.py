@@ -37,6 +37,14 @@ _GW = (0.5, 3, 2)          # (recency, relevance, importance) 权重
 _DECAY = 0.99              # 每小时衰减
 _HOUR_SECONDS = 3600
 
+# 检索"实质相关"门槛：rel 低于它只算擦边，不算命中。
+# 取值依据：_relevance_score 里 纯同义词命中 = 0.8、纯原词全命中 = 0.6，
+# 而"半词命中"（query 一半的词没在记忆里，如装了 jieba 后"事件0"只共享
+# "事件"这个超高频词）约 0.3 —— 属于擦边，应诚实返回空而不是硬塞。
+# 注意：只在**无语义路兜底**时生效（见 retrieve），有 chromadb 时保留全量
+# 让语义路能捞起关键词召不动的模糊查询。
+_MIN_RELEVANCE = 0.5
+
 # 归档语义（ArgOS 本地）：布尔 archived=True 即管家降级层 ——
 # 退出检索/合并、免修剪，条目永不物理删除（证据链红线）。
 def _archived(e: Dict) -> bool:
@@ -229,9 +237,22 @@ def parse_typed_reflection(raw: str) -> Optional[List[Dict]]:
             imp = int(item.get("importance", 5))
         except (TypeError, ValueError):
             imp = 5
+        # evidence（可选）：这条反思依据的**源事实原文片段**，交给 brain 做溯源校验。
+        # 老格式没有这个字段 → None，校验层按"未给依据"处理（向后兼容）。
+        ev = str(item.get("evidence", "")).strip()
         out.append({"mtype": mtype, "content": content,
-                    "importance": max(0, min(9, imp))})
+                    "importance": max(0, min(9, imp)),
+                    "evidence": ev or None})
     return out or None
+
+
+def canonical_terms(text: str) -> set:
+    """公开口：文本里命中的规范实体（同义词族归一），反思防编造校验用。
+
+    只认机器人世界里可枚举的具体对象（充电桩/家/桌边/门口/巡逻/急停）。
+    抽象表述不产生实体 —— 所以拿它做校验不会误杀归纳，只拦"凭空冒出一个地点"。
+    """
+    return _canonical_terms(text)
 
 
 def _tokenize(text: str) -> List[str]:
@@ -263,9 +284,22 @@ def _relevance_score(content: str, query: str,
                      query_tokens: Optional[List[str]] = None,
                      q_canon: Optional[set] = None,
                      content_canon: Optional[set] = None) -> float:
-    """相关度: 原词命中 + 同义词召回。0-1。"""
+    """相关度: 原词命中 + 同义词召回。0-1。
+
+    原词命中里，**纯数字 token 用精确 token 匹配**而非子串 —— 否则查询
+    "事件0"里的"0"会把"事件104"里的"104"误判成命中（"0"是"104"的子串），
+    装了 jieba 之后所有"事件N"会互相召回。实词保留子串匹配，因为没装
+    jieba 时中文整段无空格，只能靠子串兜住。
+    """
     words = query_tokens if query_tokens is not None else _tokenize(query)
-    raw = sum(1 for w in words if w in content) / len(words) if words else 0.0
+    content_token_set = set(_tokenize(content))
+    hits = 0
+    for w in words:
+        if w.isdigit():
+            hits += 1 if w in content_token_set else 0   # 数字：精确，防子串误命中
+        else:
+            hits += 1 if w in content else 0             # 实词：子串，兼容无 jieba
+    raw = hits / len(words) if words else 0.0
     if q_canon is None:
         q_canon = _canonical_terms(query)
     syn = 0.0
@@ -344,29 +378,32 @@ def retrieve(entries: List[Dict], query: str = "", top_k: int = 5,
             for t in set(toks):
                 df[t] = df.get(t, 0) + 1
         avgdl = sum(len(v) for v in tok_by_id.values()) / total
+    # 语义路兜底开关：anchor 可用时保留全量，让 RRF 能捞起关键词召不动的
+    # 模糊查询（如"时间"）；否则在关键词路就把擦边条目挡掉（诚实，不硬塞）。
+    semantic = anchor is not None and getattr(anchor, "available", False)
     scored = []
-    any_hit = False
     for i, e in enumerate(active):
         eid = _entry_id(e, i)
         rel = _relevance_score(e["content"], query, q_tokens, q_canon,
                                canon_by_id.get(eid))
         rel = max(rel, _idf_relevance(tok_by_id.get(eid, []),
                                       q_tokens, df, total, avgdl))
-        if rel > 0:
-            any_hit = True
+        assoc_bonus = (len(canon_by_id.get(eid, set()) & assoc) * _ASSOCIATION_WEIGHT
+                       if assoc else 0.0)
+        if not semantic and rel < _MIN_RELEVANCE and assoc_bonus <= 0:
+            continue                     # 擦边（只共享高频词），不硬塞
         score = (
             _recency_score(_entry_time(e, now), now) * _GW[0]
             + rel * _GW[1]
             + e.get("importance", 5) * _GW[2]
+            + assoc_bonus
         )
-        if assoc:
-            score += len(canon_by_id.get(eid, set()) & assoc) * _ASSOCIATION_WEIGHT
         scored.append((score, e))
-    if not any_hit:      # 毫不相关 → 空（诚实：没有相关记忆，不塞无关条目）
+    if not scored:       # 毫不相关 → 空（诚实：没有相关记忆，不塞无关条目）
         return []
     # 温层向量锚点：语义路与关键词路 RRF 倒数秩融合
     try:
-        if anchor is not None and getattr(anchor, "available", False):
+        if semantic:
             sem = anchor.search(query, top_k=8)
             if sem:
                 scored = _rrf_fuse(scored, sem)

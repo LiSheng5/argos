@@ -18,6 +18,12 @@ from typing import Optional
 _DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
 _DEFAULT_MODEL = "deepseek-chat"
 
+# User-Agent 必须自己给：urllib 默认是 "Python-urllib/3.x"，
+# 被 Cloudflare 挡在门外（实测 2026-09-06：同一请求 curl 200 / urllib 403，
+# 返回体是 Cloudflare 的 `error code: 1010`）。换掉 UA 立刻正常。
+# 只要目标 API 前面有 CF，不设这个就永远 403 —— 表现为"LLM 静默降级到规则话术"。
+_UA = "ArgOS-llm/1.0 (+https://github.com/LiSheng5/argos)"
+
 
 class LlmError(Exception):
     """LLM 调用失败（调用方应降级到规则话术）。"""
@@ -45,12 +51,15 @@ class LlmClient:
     def __init__(self, base_url: Optional[str] = None,
                  model: Optional[str] = None,
                  api_key: Optional[str] = None,
-                 timeout: float = 20.0) -> None:
+                 timeout: Optional[float] = None) -> None:
         self.base_url = (base_url or os.environ.get("ARGOS_BASE_URL")
                          or _DEFAULT_BASE_URL).rstrip("/")
         self.model = model or os.environ.get("ARGOS_MODEL") or _DEFAULT_MODEL
         self.api_key = api_key if api_key is not None else load_api_key()
-        self.timeout = timeout
+        # 超时可配：推理型/慢模型（如 nemotron-3-ultra-free）生成 500 token 会超过
+        # 默认 20s，读超时直接 LlmError → 静默降级规则话术。用 ARGOS_TIMEOUT 覆盖。
+        self.timeout = (timeout if timeout is not None
+                        else float(os.environ.get("ARGOS_TIMEOUT", "20") or 20))
 
     def enabled(self) -> bool:
         return bool(self.api_key)
@@ -73,7 +82,8 @@ class LlmClient:
             f"{self.base_url}/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json",
-                     "Authorization": f"Bearer {self.api_key}"},
+                     "Authorization": f"Bearer {self.api_key}",
+                     "User-Agent": _UA},
             method="POST")
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:

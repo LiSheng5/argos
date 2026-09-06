@@ -288,10 +288,15 @@ def test_recall_is_semantic_not_substring():
 
 
 def test_reflect_noise_gate_skips_llm():
+    """真噪音（内容就那么一两种、且没有重复）→ 静默翻篇，不调 LLM、不产废话。
+
+    注意与 test_reflect_repeated_pattern_not_swallowed 的区别：
+    本用例是"内容不同但不够多样"，那条是"同一件事反复发生"（模式，不是噪音）。
+    """
     llm = _FakeLlm(reply="废话洞察")
     b = _brain(llm=llm)
     b.memory.append({"content": "完成: 巡逻一圈", "importance": 9})
-    b.memory.append({"content": "完成: 巡逻一圈", "importance": 9})  # 唯一内容 <3
+    b.memory.append({"content": "完成: 去门口", "importance": 9})    # 2 种，无重复
     assert b.tick() is None or "reflected" not in (b.tick() or {})
     assert llm.calls == []               # 噪音批不调 LLM
     assert all(e.get("reflected") for e in b.memory)  # 但指针已翻篇

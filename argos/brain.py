@@ -22,14 +22,15 @@ import os
 import random
 import threading
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from argos.backend import RobotBackend
 from argos.executor import build_executor
 from argos.llm import LlmClient, LlmError
-from argos.memory import (VectorAnchor, consolidate, parse_typed_reflection,
-                          retrieve)
+from argos.memory import (VectorAnchor, canonical_terms, consolidate,
+                          parse_typed_reflection, retrieve)
 from argos.perception import observe_text
 from argos.persona import load_persona, system_prompt
 from argos.primitives import ALLOWED_MOTION_ACTIONS
@@ -45,6 +46,34 @@ MAX_MEMORY = 100             # 活跃记忆上限（Dagent 管家同思想：超
 # 重要性之和达阈值 → 归纳一条反思记忆。铁律: 只复述/归纳给定事实，禁止编造。
 REFLECT_IMPORTANCE_THRESHOLD = 18   # 闲聊不凑数，攒够大事才总结（Dagent 2026-08-28 同步）
 REFLECT_MAX_ENTRIES = 8             # 一次反思最多纳入的条目数（防上下文过长）
+
+# 反思防编造（评审 2026-09-05，见 文档/反思层有效性探测_20260905.md）
+# 铁律"只准归纳给定事实、禁止编造"原来只写在 prompt 里，代码侧零校验：
+# LLM 编出事实外的实体（"去了公园""养了三只猫"）会原样入库。机器人项目里
+# 这不只是"记录错"——一旦 recall() 接进决策回路，污染的记忆会驱动一条真狗。
+# 三层校验，越靠前越严：
+#   层1 evidence 溯源：typed 路径要求引用源事实原文，对不上 → 该条丢弃
+#   层2 世界实体：反思提到的地点/对象必须是源事实里有的（抽象归纳不含实体 → 放行）
+#   层3 重要性夹取：反思重要性不得超过源批最高分（编造内容拿不到高分，难霸占记忆）
+# 覆盖不到的部分（纯抽象编造、模型不按格式给 evidence）在文档里写明，不假装拦住。
+REFLECT_EVIDENCE_MAXLEN = 60        # evidence 允许的最长引用（防整篇复读）
+MTYPE_EPISODIC = "episodic"         # 与 memory.MTYPES 对齐（重复模式条目的归类）
+# typed 反思的输出预算。推理型模型（如 nemotron-3-ultra-free）会把英文思维链写进
+# 输出，300 token 会被 CoT 吃光、JSON 半途截断（实测 2026-09-06：300 时 0/5 解析成功，
+# 500 才稳定出完整 JSON + evidence）。换成守格式的非推理模型可再调小。
+REFLECT_TYPED_MAX_TOKENS = 500
+
+# ── 反思闭环（2026-09-06）：让反思产物被决策路径消费，不再只写不读 ──
+# 两条通路，都白名单保护：
+#   话术层：try_command 的 LLM 措辞附带 recall 记忆（狗"记得"往事）
+#   行为层：instruction 类记忆（主人长期要求）命中动作词 → 对应自主日常权重放大
+# 铁律不变：LLM/记忆只影响"说"和"选日常"，编译/落账/安全闸永不碰记忆。
+_INSTRUCTION_BOOST = 3                 # instruction 记忆命中的动作，权重放大倍数
+_INSTRUCTION_ACTION_WORDS = {          # 动作词白名单 → action（编造词进不来）
+    "navigate": ("巡逻", "巡检", "转一圈"),
+    "grab": ("拿", "抓", "捡", "取"),
+    "release": ("放下", "松开", "放开"),
+}
 
 # 地点表：名字 → (x, y[, yaw])。充电桩即"家"，缺省在原点（SimEntity 出生点）。
 DEFAULT_PLACES: Dict[str, tuple] = {
@@ -203,13 +232,17 @@ class RobotBrain:
     def try_command(self, text: str) -> str:
         """对话接单：编译 → 落账，返回给用户的回复（诚实拒绝，不空头承诺）。
 
-        有 LLM（key 配好）时措辞带性格；LLM 失败/未启用 → 规则话术（现状行为）。
+        有 LLM（key 配好）时措辞带性格，并**附带相关记忆**（话术层闭环：
+        狗会"记得"过去的成败，见 _recall_context）；LLM 失败/未启用 → 规则话术。
+        铁律：记忆只影响"怎么说"，绝不改变编译结果与落账（编译/安全闸永不读记忆）。
         """
         task = compile_command(text, self.places)
+        mem = self._recall_context(text)
         if task is None:
             return self._llm_say(
                 "unknown",
                 f"主人对机器狗说：\"{text}\"\n"
+                f"{mem}"
                 "狗只懂这些动作：去某地 / 巡逻 / 拿某物 / 放下。\n"
                 "请以狗的口气回复：老实说自己听不懂，并提示主人能说的话。"
             ) or "……这个我不认识。我只懂：去某地 / 巡逻 / 拿某物 / 放下。"
@@ -218,6 +251,7 @@ class RobotBrain:
             return self._llm_say(
                 "refuse",
                 f"主人对机器狗说：\"{text}\"\n"
+                f"{mem}"
                 f"但这件事现在做不了，原因：{reason}\n"
                 "请以狗的口气简短回复：说明做不了和原因，不编造。"
             ) or f"……这个我现在做不了（{reason}）。"
@@ -225,8 +259,21 @@ class RobotBrain:
         return self._llm_say(
             "ack",
             f"任务事实：{self._describe(task)}\n"
+            f"{mem}"
             f"原版话术（可参考语气，不许改动任务事实）：{fallback}"
         ) or fallback
+
+    def _recall_context(self, text: str, top_k: int = 3) -> str:
+        """召回与这句话相关的记忆，拼成给 LLM 的上下文（话术层闭环）。
+
+        这是"反思产物被生产路径消费"的第一条通路：recall() 从此有真实调用方。
+        无相关记忆 → 空串（不干扰原 prompt）；只读记忆，不改任何状态。
+        """
+        hits = self.recall(text, top_k=top_k)
+        if not hits:
+            return ""
+        lines = [f"- {h.get('content', '')}" for h in hits]
+        return "你记得的相关往事：\n" + "\n".join(lines) + "\n"
 
     def _llm_say(self, prompt: str, user: str) -> Optional[str]:
         """LLM 措辞（带 persona 性格）；未启用或失败 → None（调用方走规则话术）。"""
@@ -368,6 +415,7 @@ class RobotBrain:
         if batt is None:
             batt = SAFE_BATT      # 电量未知按最低档（评审 P1-6：不再默认满电）
         cands, weights = [], []
+        hints = self._instruction_hints()   # 行为层闭环：主人长期要求 → 日常权重
         for item in self.routine:
             action = str(item.get("action", ""))
             if self._blocked.get(action, 0) > self._tick:
@@ -386,11 +434,31 @@ class RobotBrain:
                 if spot is not None and self._near_spot(spot, pose):
                     continue
             w = int(item.get("weight", 1))
+            boost = _INSTRUCTION_BOOST if action in hints else 1
             cands.append(item)
-            weights.append(w * 10 if low else max(1, w))
+            weights.append(w * 10 if low else max(1, w * boost))
         if not cands:
             return None
         return self.rng.choices(cands, weights=weights, k=1)[0]
+
+    def _instruction_hints(self) -> Dict[str, int]:
+        """从 instruction 类反思记忆提取"主人要求的动作"→ 命中次数（白名单保护）。
+
+        行为层闭环：反思归纳出的长期要求（mtype/category == instruction）会放大
+        对应自主日常的权重。只认 _INSTRUCTION_ACTION_WORDS 白名单动作词 ——
+        编造的"去公园"里的"公园"不在白名单，不会放大任何动作；最坏情况是狗
+        多巡逻/多抓几次，仍要过 SafetyGate 与动作白名单，不产生新危险动作。
+        命中同一动作多次只计 1（避免一条长记忆刷权重）。
+        """
+        hints: Dict[str, int] = {}
+        for e in self.memory:
+            if e.get("mtype") != "instruction" and e.get("category") != "instruction":
+                continue
+            content = str(e.get("content", ""))
+            for action, words in _INSTRUCTION_ACTION_WORDS.items():
+                if any(w in content for w in words):
+                    hints[action] = 1          # 存在即放大，不叠加
+        return hints
 
     def _near(self, place: str, pose: Dict, eps: float = 0.5) -> bool:
         spot = self.places.get(place)
@@ -513,35 +581,57 @@ class RobotBrain:
         """反思归纳（阶段① 海马体升级，Dagent memory_card.maybe_reflect 同款）。
 
         触发: 未反思记忆的重要性之和 ≥ REFLECT_IMPORTANCE_THRESHOLD。
-        铁律: 反思只准复述/归纳给定记忆里的事实，禁止编造（防 confabulation）。
+        铁律: 反思只准复述/归纳给定记忆里的事实，禁止编造 —— 现在**有代码侧校验**
+          （层1 evidence 溯源 / 层2 世界实体 / 层3 重要性夹取，见模块常量注释）。
+        候选: 按**重要性**取窗口（不再是卡上顺序），大事不会被一堆碎事埋在窗口外；
+          喂给 LLM 前再按时间排回，归纳要有时间感。
         闸2: 候选批唯一内容 <3 → 日常噪音，静默翻篇不调 LLM（防"总结垃圾产生垃圾"）。
-        typed（TDAM 三分类）: LLM 提炼 ≤3 条 persona/episodic/instruction，
-          解析失败/LLM 异常 → 无痕落回单条路径。
-        单条: LLM 归纳 1-2 条上层结论 → 无 LLM 规则摘要（只做事实摘要）。
+          例外:**同一件事反复发生**是模式不是噪音 → 写一条事实复述（仍不调 LLM）。
+        typed（TDAM 三分类）: LLM 提炼 ≤3 条 persona/episodic/instruction，逐条过校验；
+          解析失败/LLM 异常 → 无痕落回单条路径；**校验全不过 → 不再试单条**
+          （模型输出既然不可信，就 fail-closed 落到 100% 有根的规则摘要）。
+        单条: LLM 归纳 1-2 条上层结论 → 过层2 → 不过则同样落规则摘要。
         闸2b: 产出与既有反思条同文 → 不重写，静默翻篇。
         返回反思文本（多行=typed 多条）；未触发/全撞车 → None。
         """
-        cands = [e for e in self.memory
-                 if not e.get("reflected") and not e.get("archived")
-                 and e.get("kind") != "reflection"]
-        cands = cands[:REFLECT_MAX_ENTRIES]
+        cands = self._reflect_candidates()
         if not cands or \
                 sum(e.get("importance", 5) for e in cands) < REFLECT_IMPORTANCE_THRESHOLD:
             return None
-        # 闸2：候选批唯一内容 <3 → 判定日常噪音，翻篇但不产废话洞察
+        # 闸2：候选批唯一内容 <3 → 噪音批
         if len({e.get("content", "") for e in cands}) < 3:
+            pattern = self._repeated_pattern(cands)
+            if pattern is None:                  # 真噪音：翻篇，不产废话洞察
+                for e in cands:
+                    e["reflected"] = True
+                self.save()
+                return None
+            # 反复发生的是模式：写一条事实复述（不调 LLM，只报事实与次数）
+            texts = [pattern] if self._append_reflection(
+                pattern, self._reflect_cap(cands), mtype=MTYPE_EPISODIC) else []
             for e in cands:
                 e["reflected"] = True
             self.save()
-            return None
+            return "\n".join(texts) or None
+
         facts = "\n".join(f"- {e['content']}" for e in cands)
         texts: List[str] = []
+        typed_rejected = False
         if self._llm_on():
             typed = self._reflect_typed(facts)
             if typed is not None:
+                cap = self._reflect_cap(cands)
                 existing = {e.get("content") for e in self.memory
                             if e.get("kind") == "reflection"}
-                fresh = [t for t in typed if t["content"] not in existing]
+                fresh = []
+                for t in typed:
+                    if t["content"] in existing:
+                        continue                 # 闸2b：同文不重写
+                    if not self._grounded(t, facts):
+                        continue                 # 编造/无据 → 丢弃，不入库
+                    t["importance"] = min(t["importance"], cap)   # 层3 夹取
+                    fresh.append(t)
+                typed_rejected = not fresh
                 if fresh:
                     now = time.time()
                     for t in fresh:
@@ -550,31 +640,132 @@ class RobotBrain:
                             "content": t["content"],
                             "importance": t["importance"],
                             "kind": "reflection", "mtype": t["mtype"],
+                            "evidence": t.get("evidence"),
                             "created_at": now,
                             "at": time.strftime("%Y-%m-%d %H:%M:%S")})
                     texts = [t["content"] for t in fresh]
-                else:
-                    texts = []              # 闸2b：全部撞车 → 静默翻篇
         if not texts:
-            text = self._llm_reflect(cands)
-            if text is None:                # 无 LLM → 规则摘要（复述权重最高 2 条）
+            text = None
+            if not typed_rejected:               # typed 已被判不可信 → 不再问 LLM
+                text = self._llm_reflect(cands)
+                if text is not None and not self._grounded_entities(text, facts):
+                    text = None                  # 层2 不过 → 落规则摘要（有根）
+            if text is None:                     # 无 LLM / 被拦 → 规则摘要（只复述）
                 tops = sorted(cands, key=lambda e: e.get("importance", 0),
                               reverse=True)[:2]
                 text = "我最近做了这些事：" + "；".join(t["content"] for t in tops)
-            if any(e.get("content") == text for e in self.memory):
-                text = None                 # 闸2b：同文不重写，只翻篇
-            else:
-                now = time.time()
-                self.memory.append({
-                    "id": f"mem_{len(self.memory) + 1}_{int(now)}",
-                    "content": text, "importance": 8, "kind": "reflection",
-                    "created_at": now,
-                    "at": time.strftime("%Y-%m-%d %H:%M:%S")})
+            if self._append_reflection(text, self._reflect_cap(cands)):
                 texts = [text]
         for e in cands:
             e["reflected"] = True           # 这批已归纳，不再重复（Dagent 指针语义）
         self.save()
         return "\n".join(texts) or None
+
+    # ── 反思内部：候选 / 校验 / 落卡 ──────────────────
+
+    def _reflect_candidates(self) -> List[Dict]:
+        """候选批：未反思的活跃非反思记忆，按**重要性**优先取窗口。
+
+        评审 E1（2026-09-05）：原来按卡上顺序（最老优先）取前 N 条。一旦最老那批
+        重要性之和不够阈值，`maybe_reflect` 既**不触发也不翻篇** —— 指针永远不动，
+        后面压着的 importance=9 的大事永远排在第 N+1 位，反思层就此哑火且无法自愈。
+        改按重要性取窗：大事永远在窗内（同分按时间，稳定排序）。
+        """
+        cands = [e for e in self.memory
+                 if not e.get("reflected") and not e.get("archived")
+                 and e.get("kind") != "reflection"]
+        cands.sort(key=lambda e: (-int(e.get("importance", 5)),
+                                  float(e.get("created_at", 0.0) or 0.0)))
+        cands = cands[:REFLECT_MAX_ENTRIES]
+        cands.sort(key=lambda e: float(e.get("created_at", 0.0) or 0.0))
+        return cands
+
+    @staticmethod
+    def _repeated_pattern(cands: List[Dict]) -> Optional[str]:
+        """噪音批里的"重复模式"：同一件事反复发生 → 返回事实复述，否则 None。
+
+        评审 E2（2026-09-05）：原来唯一内容 <3 一律静默翻篇，于是"反复撞同一堵墙"
+        这种**最该被总结的模式**被当噪音吞掉，且标记 reflected 后再无机会。
+        只复述事实与次数（不推断原因、不调 LLM），避免"总结垃圾产生垃圾"。
+        """
+        counts = Counter(str(e.get("content", "")) for e in cands)
+        repeated = [(c, n) for c, n in counts.most_common() if n >= 2 and c]
+        if not repeated:
+            return None
+        parts = [f"{c}（{n} 次）" for c, n in repeated[:2]]
+        return "反复发生：" + "；".join(parts)
+
+    @staticmethod
+    def _reflect_cap(cands: List[Dict]) -> int:
+        """层3：反思重要性上限 = min(8, 源批最高分 + 1)。
+
+        反思本该比流水账重要一点，但不能由 LLM 自报 9 分 —— 检索里 importance
+        权重是 2，编造内容一旦拿到 9 分就会长期霸占记忆顶部。
+        """
+        top = max(int(e.get("importance", 5)) for e in cands)
+        return min(max(0, top) + 1, 8)
+
+    def _grounded(self, item: Dict, facts: str) -> bool:
+        """一条 typed 反思站不站得住：层1 evidence 溯源 + 层2 世界实体。"""
+        return (self._evidence_ok(item.get("evidence"), facts)
+                and self._grounded_entities(str(item.get("content", "")), facts))
+
+    @staticmethod
+    def _evidence_ok(evidence: Optional[str], facts: str) -> bool:
+        """层1：给了 evidence 就必须能在源事实里**逐字找到**（引用溯源）。
+
+        没给 → True（交给层2 兜底，兼容老格式与不遵循格式的模型）。
+        给了但源事实里没有 / 超长复读 → False（判为编造或敷衍）。
+        """
+        if not evidence:
+            return True
+        e = str(evidence).strip()
+        if not e or len(e) > REFLECT_EVIDENCE_MAXLEN:
+            return False
+        return e in facts
+
+    def _grounded_entities(self, text: str, facts: str) -> bool:
+        """层2：反思提到的世界实体，必须源事实里也有。
+
+        世界实体 = 同义词族规范词（充电桩/家/桌边/门口/巡逻/急停）+ 地点表地名。
+        抽象归纳（"主人喜欢看我干活"）不含任何世界实体 → 空集 ⊆ 任意集，恒真放行。
+        所以这层**不会误杀归纳**，只拦"凭空冒出一个地点/对象"这类硬编造。
+        """
+        allowed = canonical_terms(facts) | self._places_in(facts)
+        return self._world_entities(text) <= allowed
+
+    def _world_entities(self, text: str) -> set:
+        """文本里出现的世界实体（同义词族 + 地点表）。"""
+        return canonical_terms(text) | self._places_in(text)
+
+    def _places_in(self, text: str) -> set:
+        """文本里出现的地点表地名 —— **只认 ≥2 字**。
+
+        单字地名（默认表里的"家"）不做子串匹配：中文没有词边界，
+        "邻居家 / 大家 / 回家 / 家里"里都含"家"，会把一条合法反思误判成
+        "凭空提到了地点家"而拦掉（2026-09-05 反向验证踩到：编造用例里
+        "邻居家的猫"被判为命中地点"家"，歪打正着但判据是错的）。
+        宁可漏拦单字地点，不可误杀归纳 —— 反思层的价值在产出，不在拦截率。
+        """
+        return {name for name in self.places
+                if name and len(name) >= 2 and name in text}
+
+    def _append_reflection(self, content: str, importance: int,
+                           mtype: Optional[str] = None) -> bool:
+        """写一条反思条目；同文已存在 → 不重写（闸2b）。返回是否真的写入。"""
+        if not content or any(e.get("content") == content for e in self.memory):
+            return False
+        now = time.time()
+        entry = {"id": f"mem_{len(self.memory) + 1}_{int(now)}",
+                 "content": content,
+                 "importance": max(0, min(9, int(importance))),
+                 "kind": "reflection",
+                 "created_at": now,
+                 "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+        if mtype:
+            entry["mtype"] = mtype
+        self.memory.append(entry)
+        return True
 
     def _llm_on(self) -> bool:
         llm = self.review_llm or self.llm
@@ -612,12 +803,17 @@ class RobotBrain:
             "规则：只能基于上面的事实，禁止编造；每条一句话、独立完整；"
             "宁缺毋滥，琐碎的不提；importance 为 0-9 整数"
             "（核心正事 8-9，一般事件 5-7，琐碎 ≤4）。\n"
+            "每条还要带 evidence：从上面的事实里**逐字引用**一句作为依据"
+            f"（≤{REFLECT_EVIDENCE_MAXLEN} 字，不许改写、不许拼凑）；"
+            "引用不到依据的条目就别写 —— 引用对不上的会被丢弃。\n"
             '只输出 JSON 数组，格式：'
-            '[{"mtype": "episodic", "content": "...", "importance": 6}]\n'
+            '[{"mtype": "episodic", "content": "...", "importance": 6,'
+            ' "evidence": "完成: 去门口"}]\n'
             "不要输出 Markdown 代码块或其他任何文字。")
         try:
             raw = self._reflect_llm().chat(
-                system_prompt(self.persona), prompt, max_tokens=300, temperature=0.5)
+                system_prompt(self.persona), prompt,
+                max_tokens=REFLECT_TYPED_MAX_TOKENS, temperature=0.5)
             return parse_typed_reflection(raw)
         except LlmError:
             return None
