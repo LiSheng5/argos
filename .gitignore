@@ -7,6 +7,11 @@ __pycache__/
 store/
 *.bad-*.json
 
+# Web Console 前端：依赖与构建产物不入库，源码在 console/src
+console/node_modules/
+console/dist/
+console/.vite/
+
 # 密钥（未来接 LLM 用，铁律：绝不入 git）
 api_key*.txt
 .env
@@ -18,3 +23,6 @@ argos/sim/unitree_sdk2_python/
 
 # 项目书（申请文书，不公开，本地保留；md 源稿 / html 排版 / pdf 成品都不进库）
 文档/项目书*
+
+# 本机施工日志与临时验证脚本（工友的本地工作区，不随仓库走）
+.workbuddy/

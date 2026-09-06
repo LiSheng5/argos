@@ -52,8 +52,12 @@ def default_brain() -> RobotBrain:
     return RobotBrain(executor=build_executor(kind), memory_path=store)
 
 
-async def _tick_loop(brain: RobotBrain) -> None:
+async def _tick_loop(brain: RobotBrain, sink=None) -> None:
     """自主循环：每帧恰一步（Dagent _tick_loop 同款，随 lifespan 启停）。
+
+    sink（可选）：每帧把 brain.tick() 的返回事件交给回调 —— Web Console 的
+    Event Bus 就挂在这儿。**默认 None 时与原来逐字等价**，现有测试守着这条。
+    回调里的异常一律吞掉：观测层出任何问题都不能影响大脑继续跑。
 
     **必须走 to_thread**（评审 P0-2）：brain.tick() 会一路同步调用到执行器，
     DdsEntity 一个 move_to 最长 15s、一次巡逻更久。直接在事件循环里调会把
@@ -62,20 +66,28 @@ async def _tick_loop(brain: RobotBrain) -> None:
     """
     try:
         while True:
-            await asyncio.to_thread(brain.tick)
+            ev = await asyncio.to_thread(brain.tick)
+            if sink is not None:
+                try:
+                    sink(ev)
+                except Exception as exc:
+                    print(f"[tick] 事件回调异常已隔离：{exc}")
             await asyncio.sleep(_tick_interval())
     except asyncio.CancelledError:
         pass
 
 
-def build_app(brain: RobotBrain | None = None) -> FastAPI:
+def build_app(brain: RobotBrain | None = None, tick_sink=None) -> FastAPI:
     """装配 app。brain 可注入（测试用）；tick 循环只进 lifespan ——
-    TestClient 不进 with 上下文则不启动（测试确定性，Dagent 同款取舍）。"""
+    TestClient 不进 with 上下文则不启动（测试确定性，Dagent 同款取舍）。
+
+    tick_sink：给 Web Console 的事件回调，None 时与旧签名行为一致。
+    """
     brain = brain or default_brain()
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
-        task = asyncio.create_task(_tick_loop(brain))
+        task = asyncio.create_task(_tick_loop(brain, tick_sink))
         yield
         task.cancel()
 
