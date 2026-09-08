@@ -97,17 +97,16 @@ python -m pytest tests -q -p no:cacheprovider
 #     排查记录见 文档/反思层有效性探测_20260905.md §5.5
 ```
 
-## 站在哪些开源肩膀上
+## 本项目的部分代码/思路来源于以下开源项目，感谢开源社区的贡献，让我们能够站在巨人的肩膀上。
 
-| 开源项目 | 出品方 | 角色 |
+| 开源项目 | 出品方 | 在本项目中的角色 |
 | --- | --- | --- |
-| unitree_mujoco | 宇树官方 | 仿真世界：官方 go2 数字替身 + 官方桥（上游一字未改） |
-| unitree_sdk2_python | 宇树官方 | 与真狗同款的通信语言：DDS / LowCmd / SportClient |
-| MuJoCo | Google DeepMind | 物理引擎 |
-| CycloneDDS | Eclipse 基金会 | DDS 底层传输 |
-| OpenClaw Skill 规范 | 开源社区 | 对外技能封装 |
-
-大脑层的"规划—执行—反思—记忆"系统源自作者自己的项目 [NPCSidekick](https://github.com/LiSheng5/npcsidekick) 尚未发布的新改动（AI 游戏 NPC 框架，MIT）。
+| [unitree_mujoco](https://github.com/unitreerobotics/unitree_mujoco) | 宇树官方 | 仿真世界：官方 go2 数字替身 + 官方桥。**上游一字未改** |
+| [unitree_sdk2_python](https://github.com/unitreerobotics/unitree_sdk2_python) | 宇树官方 | 与真狗同款的通信语言：DDS 频道、LowCmd/LowState、SportClient。真机阶段直接复用 |
+| [MuJoCo](https://github.com/google-deepmind/mujoco) | Google DeepMind | 物理引擎——替身背后的牛顿定律计算器 |
+| [CycloneDDS](https://github.com/eclipse-cyclonedds/cyclonedds) | Eclipse 基金会 | DDS 通信的底层传输 |
+| [OpenClaw Skill 规范](https://github.com/openclaw/openclaw) | 开源社区 | 把"狗大脑"封装成对外技能 |
+| [NPCSidekick](https://github.com/LiSheng5/npcsidekick) | 我自己的开源项目 | 记忆系统的出处：语义检索 / 反思归纳 / 遗忘合并，完整移植自它 |
 
 ## 致谢
 
