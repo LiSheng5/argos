@@ -1,6 +1,6 @@
 """机器人服务器：把 brain 挂成 HTTP（模式复用 1_NPCSidekick/npc/server.py，只读参考）。
 
-启动: python -m argos.server [--port 8766] [--executor sim|mujoco]
+启动: python -m argos.server [--port 8766] [--executor sim|mujoco|dds|real]
       （或双击 启动ArgOS服务器.bat）
 LLM 可选：配好 ARGOS_API_KEY（或仓库根 api_key.txt）后，回复与反思自动带性格
 （argos/persona.json 可编辑）；无 key 纯规则，行为与旧版一致。
@@ -19,6 +19,7 @@ import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 
@@ -28,8 +29,21 @@ from argos.executor import build_executor
 TICK_INTERVAL = 3.0   # 帧间隔（秒），环境变量 ROBOT_TICK_INTERVAL 可覆盖
 _DEFAULT_PORT = 8766  # 1_NPCSidekick 大脑占 8765，机器人让一位
 
-# 同 Dagent：本地页面来源放行，其余 Origin 拒绝；无 Origin（curl/脚本）放行
-_ALLOWED_ORIGIN_PREFIXES = ("http://127.0.0.1", "http://localhost")
+# 同 Dagent：本地页面来源放行，其余 Origin 拒绝；无 Origin（curl/脚本）放行。
+# 用 hostname 精确匹配而非前缀匹配 —— 前缀匹配会把 http://127.0.0.1.evil.com
+# 也放进来（DNS rebinding 场景）；改解析出 host 再比对。
+_ALLOWED_ORIGIN_HOSTS = ("127.0.0.1", "localhost")
+
+
+def _origin_ok(origin: str) -> bool:
+    """Origin 是否放行：空（无 Origin 头，curl/脚本）放行；否则 hostname 精确命中白名单。"""
+    if not origin:
+        return True
+    try:
+        host = urlparse(origin).hostname
+    except ValueError:
+        return False
+    return host in _ALLOWED_ORIGIN_HOSTS
 
 
 def _tick_interval() -> float:
@@ -40,8 +54,7 @@ def _tick_interval() -> float:
 
 
 def _verify_origin(request: Request) -> None:
-    origin = request.headers.get("origin", "")
-    if origin and not origin.startswith(_ALLOWED_ORIGIN_PREFIXES):
+    if not _origin_ok(request.headers.get("origin", "")):
         raise HTTPException(status_code=403, detail="origin 不允许")
 
 

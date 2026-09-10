@@ -47,6 +47,7 @@ export function ConsoleProvider({ children }) {
     let closed = false
     let retry = 0
     let ws
+    let retryTimer = null
 
     const connect = () => {
       if (closed) return
@@ -54,7 +55,7 @@ export function ConsoleProvider({ children }) {
       ws.onopen = () => { setConnected(true); retry = 0 }
       ws.onclose = () => {
         setConnected(false)
-        if (!closed) setTimeout(connect, Math.min(1000 * ++retry, 5000))
+        if (!closed) retryTimer = setTimeout(connect, Math.min(1000 * ++retry, 5000))
       }
       ws.onerror = () => ws?.close()
       ws.onmessage = (m) => {
@@ -79,7 +80,12 @@ export function ConsoleProvider({ children }) {
     }
     connect()
     refresh()                       // 首次挂载先补一次 REST，WS 慢半拍也不空
-    return () => { closed = true; ws?.close() }
+    return () => {
+      closed = true
+      if (retryTimer) clearTimeout(retryTimer)
+      if (timerRef.current) clearTimeout(timerRef.current)
+      ws?.close()
+    }
   }, [refresh, scheduleRefresh])
 
   const value = useMemo(

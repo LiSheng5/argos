@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
 import { useConsole } from '../store.jsx'
 import { CameraView, Dot, Metric, RobotImage } from '../components/shared.jsx'
@@ -9,8 +9,14 @@ export default function Robot() {
   const [id, setId] = useState('')
   const [saved, setSaved] = useState(false)
 
+  // 只在首次拿到 profile 时灌初值：之后每次 refresh() 都会换成新 profile 对象，
+  // 无条件重置会把用户正在输入的内容冲掉。
+  const inited = useRef(false)
   useEffect(() => {
-    if (profile) { setName(profile.name || ''); setId(profile.id || '') }
+    if (profile && !inited.current) {
+      setName(profile.name || ''); setId(profile.id || '')
+      inited.current = true
+    }
   }, [profile])
 
   const saveProfile = async () => {

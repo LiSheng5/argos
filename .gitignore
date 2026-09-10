@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+.pytest_cache/
 
 # 运行时产物：记忆卡 robot_memory.json（store/），坏卡改名留证（*.bad-*.json）
 store/

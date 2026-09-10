@@ -65,3 +65,12 @@ def test_origin_check():
     assert c.get("/api/state",
                  headers={"Origin": "http://127.0.0.1:5500"}).status_code == 200
     assert c.get("/api/state").status_code == 200     # 无 Origin(curl/脚本)放行
+
+
+def test_origin_prefix_not_bypassed():
+    """回归锚（2026-09-10）：前缀匹配会让 127.0.0.1.evil.com 混进来，必须被拒。"""
+    c = _client()
+    for bad in ("http://127.0.0.1.evil.com", "http://localhost.evil.com",
+                "http://127.0.0.1.attacker.io:8080"):
+        assert c.get("/api/state",
+                     headers={"Origin": bad}).status_code == 403, bad

@@ -72,7 +72,10 @@ class CameraService:
             import httpx
         except ImportError as exc:
             raise CameraUnavailable("缺 httpx，无法转发外部流") from exc
-        async with httpx.AsyncClient(timeout=None) as client:
+        # 连接/写 5s、读空闲 30s（MJPEG 帧间隔通常 <1s，30s 无数据即视为断流）。
+        # 原来 timeout=None：上游卡住时这条响应会被永久挂起。
+        timeout = httpx.Timeout(connect=5.0, read=30.0, write=5.0, pool=5.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             try:
                 async with client.stream("GET", url) as resp:
                     async for chunk in resp.aiter_bytes():

@@ -52,7 +52,8 @@ class WebSocketHub:
             self._task = asyncio.create_task(self.telemetry_loop())
         if self._snapshot is not None:        # 刚连上先给一份全量，避免空白页
             try:
-                await ws.send_json({"type": "snapshot", "data": self._snapshot()})
+                snap = await asyncio.to_thread(self._snapshot)
+                await ws.send_json({"type": "snapshot", "data": snap})
             except Exception:
                 pass
 
@@ -102,8 +103,12 @@ class WebSocketHub:
             t = time.monotonic()
             if self._robot_state is not None and t - last_state >= period_state:
                 last_state = t
-                await self.broadcast("robot.state", self._robot_state())
+                # to_thread：这些读取会碰 brain/executor（与 tick 线程并发），
+                # 同步跑会阻塞事件循环、把急停按钮卡住（P0-2 同源教训）。
+                await self.broadcast("robot.state",
+                                     await asyncio.to_thread(self._robot_state))
             if self._telemetry is not None and t - last_tele >= period_tele:
                 last_tele = t
-                await self.broadcast("robot.telemetry", self._telemetry())
+                await self.broadcast("robot.telemetry",
+                                     await asyncio.to_thread(self._telemetry))
             await asyncio.sleep(_IDLE_SLEEP)

@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from typing import Optional
 
@@ -60,12 +61,11 @@ class InstrumentedBackend:
     def apply(self, action, params):
         ok, reason = self._inner.apply(action, params)      # 先照原样执行
         console = self._console
+        run = console.active_run_snapshot()                 # 带锁读，锁内不调 brain
         decision = SafetyDecision(action=str(action), approved=bool(ok),
                                   reason=str(reason or ("批准" if ok else "")),
-                                  runId=console.active_run.id
-                                  if console.active_run else None)
+                                  runId=run.id if run else None)
         console.last_decision = decision
-        run = console.active_run
         if ok:
             console.bus.emit(EV_SAFETY_APPROVED, CAT_SAFETY,
                              f"Safety check passed. {action} approved",
@@ -103,6 +103,11 @@ class Console:
         self.active_run: Optional[Run] = None
         self.last_decision: Optional[SafetyDecision] = None
         self.started_at = time.time()
+        # 并发保护：submit 走 to_thread、tick_sink 走 tick 线程，两者都会读写
+        # active_run。锁只包"读写 active_run 引用"的短临界区，**持锁时绝不调
+        # brain** —— 否则与 brain._lock 形成 AB-BA 死锁（tick 持 brain 锁 → apply
+        # 要 Console 锁；submit 持 Console 锁 → 又要 brain 锁）。
+        self._lock = threading.RLock()
         self._mem_count = len(getattr(brain, "memory", []) or [])
         self.bus.subscribe(self.store.save_event)     # 事件落盘（订阅者之一）
         self._wrap_backend()
@@ -125,7 +130,8 @@ class Console:
         """
         text = (text or "").strip()
         run = Run(command=text, source="user")
-        self.active_run = run
+        with self._lock:
+            self.active_run = run
         self.store.save_run(run)
         run.set_stage(STAGE_INPUT, DONE, text)
         self.bus.emit(EV_COMMAND_RECEIVED, CAT_COMMAND,
@@ -229,32 +235,52 @@ class Console:
 
     def _claim_run(self, desc: str) -> Run:
         """用户单优先复用当前 Run；否则这是大脑自选的日常，另开一条。"""
-        r = self.active_run
-        if (r is not None and r.status == RUNNING and r.source == "user"
-                and r.stage(STAGE_TASK) is not None
-                and r.stage(STAGE_TASK).status == RUNNING):
-            return r
+        with self._lock:
+            r = self.active_run
+            if (r is not None and r.status == RUNNING and r.source == "user"
+                    and r.stage(STAGE_TASK) is not None
+                    and r.stage(STAGE_TASK).status == RUNNING):
+                return r
         run = Run(command=desc, source="autonomous")
         run.set_stage(STAGE_INPUT, DONE, "自主日常（非用户指令）")
         run.set_stage(STAGE_BRAIN, DONE, "大脑自选日常")
         run.set_stage(STAGE_LLM, SKIPPED, "自主日常不调 LLM")
         self.store.save_run(run)
-        self.active_run = run
+        with self._lock:
+            self.active_run = run
         self.bus.emit(EV_BRAIN_STARTED, CAT_BRAIN,
                       f"自主日常：{desc}", run.id)
         return run
 
     def _current_run(self, desc: str) -> Run:
-        if self.active_run is not None and self.active_run.status == RUNNING:
-            return self.active_run
+        with self._lock:
+            cur = self.active_run
+            if cur is not None and cur.status == RUNNING:
+                return cur
         run = Run(command=desc, source="autonomous")
         self.store.save_run(run)
-        self.active_run = run
+        with self._lock:
+            self.active_run = run
         return run
 
     def _close(self, run: Run) -> None:
-        if self.active_run is run:
-            self.active_run = None
+        with self._lock:
+            if self.active_run is run:
+                self.active_run = None
+
+    # ── 并发安全的读取口（锁内不调 brain）──────────────────
+
+    def active_run_snapshot(self) -> Optional[Run]:
+        """带锁读当前 Run 引用。"""
+        with self._lock:
+            return self.active_run
+
+    def task_snapshot(self):
+        """一次取"任务视图"三件套（/api/tasks 用）；brain 读取在锁外，
+        避免与 brain._lock 形成 AB-BA（见 _lock 注释）。"""
+        return (self.brain.status(),
+                getattr(self.brain, "activity", None),
+                self.active_run_snapshot())
 
     def _watch_memory(self) -> None:
         n = len(getattr(self.brain, "memory", []) or [])

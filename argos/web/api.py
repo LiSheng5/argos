@@ -19,7 +19,7 @@ from typing import Optional
 from fastapi import Depends, File, HTTPException, Request, UploadFile, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
-from argos.server import _verify_origin
+from argos.server import _origin_ok, _verify_origin
 from argos.web.camera import CameraService, CameraUnavailable
 from argos.web.models import CameraConfig, LlmConfig, now, to_dict
 from argos.web.upload import ImageStore
@@ -54,23 +54,28 @@ def register(app, console, images: ImageStore, camera: CameraService, hub):
 
     @app.get("/api/brain", dependencies=[Depends(_verify_origin)])
     async def api_brain():
-        """大脑状态（tick / 当前活动 / LLM 是否启用）。"""
-        return console.brain_state()
+        """大脑状态（tick / 当前活动 / LLM 是否启用）。
+
+        走 to_thread：tick 线程在并发改写 brain 状态，同步读既会阻塞事件循环、
+        又可能读到半更新态（与 P0-2 同源教训）。
+        """
+        return await asyncio.to_thread(console.brain_state)
 
     # ── Robot ───────────────────────────────────────────
 
     @app.get("/api/robot", dependencies=[Depends(_verify_origin)])
     async def api_robot():
-        return {"profile": to_dict(console.profile()),
-                "state": console.robot_state()}
+        return await asyncio.to_thread(
+            lambda: {"profile": to_dict(console.profile()),
+                     "state": console.robot_state()})
 
     @app.get("/api/robot/state", dependencies=[Depends(_verify_origin)])
     async def api_robot_state():
-        return console.robot_state()
+        return await asyncio.to_thread(console.robot_state)
 
     @app.get("/api/robot/telemetry", dependencies=[Depends(_verify_origin)])
     async def api_robot_telemetry():
-        return console.telemetry()
+        return await asyncio.to_thread(console.telemetry)
 
     @app.post("/api/robot/profile", dependencies=[Depends(_verify_origin)])
     async def api_robot_profile(req: Request):
@@ -109,7 +114,7 @@ def register(app, console, images: ImageStore, camera: CameraService, hub):
         console.store.set_profile(p)
         return to_dict(p)
 
-    @app.get("/api/robot/image/{name}")
+    @app.get("/api/robot/image/{name}", dependencies=[Depends(_verify_origin)])
     async def api_robot_image_file(name: str):
         p = images.resolve(f"/api/robot/image/{name}")
         if p is None:
@@ -169,12 +174,11 @@ def register(app, console, images: ImageStore, camera: CameraService, hub):
         task 在架构上是 run 的一节（brain 的 activity 就是它）。这里返回
         进行中的活动，并明确标注来源，不假装有张 tasks 表。
         """
-        st = console.brain.status()
-        act = getattr(console.brain, "activity", None)
+        st, act, active = await asyncio.to_thread(console.task_snapshot)
         items = []
         if act is not None:
             items.append({
-                "id": console.active_run.id if console.active_run else None,
+                "id": active.id if active else None,
                 "desc": act.get("desc", ""),
                 "stepsLeft": len(act.get("steps", []) or []),
                 "fromUser": bool(act.get("from_user")),
@@ -197,7 +201,7 @@ def register(app, console, images: ImageStore, camera: CameraService, hub):
 
     @app.get("/api/safety", dependencies=[Depends(_verify_origin)])
     async def api_safety():
-        return console.safety_state()
+        return await asyncio.to_thread(console.safety_state)
 
     @app.post("/api/safety/estop", dependencies=[Depends(_verify_origin)])
     async def api_safety_estop(req: Request):
@@ -343,7 +347,7 @@ def register(app, console, images: ImageStore, camera: CameraService, hub):
         camera.set_config(cfg)
         return camera.status()
 
-    @app.get("/api/camera/stream.mjpg")
+    @app.get("/api/camera/stream.mjpg", dependencies=[Depends(_verify_origin)])
     async def api_camera_stream():
         # 先判可用性再回流：CameraUnavailable 是在 async generator **迭代时**
         # 才抛的，等 StreamingResponse 开始产出就已经发不出 404 了。
@@ -356,7 +360,7 @@ def register(app, console, images: ImageStore, camera: CameraService, hub):
             camera.stream(),
             media_type="multipart/x-mixed-replace; boundary=frame")
 
-    @app.get("/api/camera/snapshot.jpg")
+    @app.get("/api/camera/snapshot.jpg", dependencies=[Depends(_verify_origin)])
     async def api_camera_snapshot():
         jpeg = await camera.snapshot()
         if not jpeg:
@@ -367,9 +371,7 @@ def register(app, console, images: ImageStore, camera: CameraService, hub):
 
     @app.websocket("/api/ws")
     async def api_ws(ws: WebSocket):
-        origin = ws.headers.get("origin", "")
-        if origin and not (origin.startswith("http://127.0.0.1")
-                           or origin.startswith("http://localhost")):
+        if not _origin_ok(ws.headers.get("origin", "")):
             await ws.close(code=1008)
             return
         await hub.connect(ws)
