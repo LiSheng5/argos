@@ -6,7 +6,7 @@
 ArgOS 把"游戏 NPC 大脑"移植到了机器狗身上：文本指令 → 编译 → 落账 → 安全闸 → 执行 → 到点记账 → 记忆回流。大脑与执行器分离，真机到手只需换执行器，大脑一行不改。
 
 **诚实声明：**
-- ✅ 大脑层（编译/落账/安全/记忆/服务）在物理仿真里完整验证，151 项测试全绿
+- ✅ 大脑层（编译/落账/安全/记忆/服务）在物理仿真里完整验证，148 项测试通过 + 3 项跳过（裸环境实测 2026-09-10；DDS 三例需宇树上游 SDK，装好后 151 全绿）
 - ✅ 真机执行器（高层 SportClient + 闭环控制器 + 断链看门狗）代码与单测就绪
 - ✅ Web Console（观察 + 控制层）可用，只观测与下发指令、不决策
 - ❌ **尚未在真机上运行**——真机联调清单见 `文档/真机安全清单.md`
@@ -91,7 +91,8 @@ cd console && npm install && npm run dev       # 前端 localhost:5173
 
 ```bash
 python -m pytest tests -q -p no:cacheprovider
-# 151 passed, 0 skipped
+# 148 passed, 3 skipped          ← 裸环境实测（2026-09-10）
+# 装了宇树上游 SDK（unitree_sdk2py，见 requirements.txt 第 4 节）后为 151 passed, 0 skipped
 # 注：test_dds_sim / test_dds_walk / test_dds_closed_loop 三例跑真实物理仿真 + DDS 闭环，
 #     对机器负载敏感（走位与关节收敛有随机性），负载高时会失败 —— 与大脑层改动无关，
 #     排查记录见 文档/反思层有效性探测_20260905.md §5.5
