@@ -7,7 +7,7 @@ const ConsoleContext = createContext(null)
 
 const EMPTY = {
   system: null, robot: null, brain: null, safety: null,
-  profile: null, camera: null, runs: [], events: [],
+  profile: null, camera: null, runs: [], events: [], health: null,
 }
 
 function wsUrl() {
@@ -22,13 +22,13 @@ export function ConsoleProvider({ children }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [system, robotRes, brain, safety, camera, runs, events] =
+      const [system, health, robotRes, brain, safety, camera, runs, events] =
         await Promise.all([
-          api.system(), api.robot(), api.brain(), api.safety(),
+          api.system(), api.health(), api.robot(), api.brain(), api.safety(),
           api.camera(), api.runs({ limit: 50 }), api.events({ limit: 60 }),
         ])
       setData((d) => ({
-        ...d, system, brain, safety, camera,
+        ...d, system, health, brain, safety, camera,
         robot: robotRes.state, profile: robotRes.profile,
         runs: runs.runs || [], events: events.events || [],
       }))
@@ -72,6 +72,8 @@ export function ConsoleProvider({ children }) {
             ...d,
             robot: { ...d.robot, battery: tm.battery, temperature: tm.temperature, cpu: tm.cpu },
           } : d))
+        } else if (t === 'system.health') {
+          setData((d) => ({ ...d, health: msg.data }))
         } else if (t === 'event.created') {
           setData((d) => ({ ...d, events: [msg.data, ...d.events].slice(0, 200) }))
           scheduleRefresh()

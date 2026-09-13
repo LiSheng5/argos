@@ -25,10 +25,21 @@ def _safe_pose(brain) -> tuple:
         return {}, False
 
 
-def robot_state(brain, profile: Optional[RobotProfile] = None) -> dict:
-    """需求 §15 的统一模型。5–10Hz 推。"""
-    pose, ok = _safe_pose(brain)
-    st = _status(brain)
+def robot_state(brain, profile: Optional[RobotProfile] = None,
+                pose: Optional[dict] = None,
+                runtime_state: Optional[str] = None) -> dict:
+    """需求 §15 的统一模型。5–10Hz 推。
+
+    pose / runtime_state 可由调用方传入（Console 的 last-value 快照与状态）：
+    给了就不碰执行器 —— 注意 `brain.status()` 内部**也带一次 `observe()`**，
+    正是要绕开的那个调用，所以状态名也请调用方直接给。None → 走旧行为。
+    """
+    if pose is None:
+        pose, ok = _safe_pose(brain)
+    else:
+        ok = True
+    if runtime_state is None:
+        runtime_state = str(_status(brain).get("state", "unknown"))
     estop = bool(getattr(brain.backend.gate, "estop", False))
     return to_dict(RobotState(
         robotId=(profile.id if profile else "ARGOS-01"),
@@ -37,7 +48,7 @@ def robot_state(brain, profile: Optional[RobotProfile] = None) -> dict:
             lastSeen=now() if ok else None,
             latencyMs=None,                       # 现有系统不测量，不给假数
         ),
-        runtime=Runtime(state=str(st.get("state", "unknown"))),
+        runtime=Runtime(state=str(runtime_state)),
         battery=_as_float(pose.get("battery_pct")),
         pose=Pose(x=float(pose.get("x", 0.0) or 0.0),
                   y=float(pose.get("y", 0.0) or 0.0),
@@ -52,9 +63,31 @@ def robot_state(brain, profile: Optional[RobotProfile] = None) -> dict:
     ))
 
 
-def telemetry(brain) -> dict:
-    """慢变量，1Hz 推。现在只有电量是真数据。"""
-    pose, _ = _safe_pose(brain)
+def offline_state(brain, profile: Optional[RobotProfile] = None) -> dict:
+    """读超时 / 执行器不响应时的诚实骨架：连接断开、数据一律 null。
+
+    与「缺传感器 = null」同一个原则：拿不到就说拿不到，不编一个数字出来。
+    """
+    return to_dict(RobotState(
+        robotId=(profile.id if profile else "ARGOS-01"),
+        connection=Connection(status="disconnected", lastSeen=None,
+                              latencyMs=None),
+        runtime=Runtime(state="unknown"),
+        battery=None,
+        pose=None,
+        temperature=None,
+        cpu=None,
+        memory=None,
+        gripper=None,
+        estop=False,
+        updatedAt=now(),
+    ))
+
+
+def telemetry(brain, pose: Optional[dict] = None) -> dict:
+    """慢变量，1Hz 推。现在只有电量是真数据。pose 语义同 robot_state。"""
+    if pose is None:
+        pose, _ = _safe_pose(brain)
     return {
         "battery": _as_float(pose.get("battery_pct")),
         "temperature": None,

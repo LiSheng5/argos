@@ -4,14 +4,25 @@ import { api } from '../api.js'
 import { useConsole } from '../store.jsx'
 import { CameraView, Dot, EstopBanner, Metric, Pill, RobotImage, fmtTime } from '../components/shared.jsx'
 
+// 健康门五态 → 徽标（沿用现有 Pill + Dot 的写法，不另起一套风格）
+const HEALTH = {
+  ok: { tone: 'green', dot: 'ok', text: 'Tick 正常' },
+  degraded: { tone: 'amber', dot: 'busy', text: 'Tick 变慢' },
+  stalled: { tone: 'red', dot: 'error', text: '大脑无响应' },
+  idle: { tone: '', dot: 'skipped', text: 'Tick 未启动' },
+  unknown: { tone: '', dot: 'skipped', text: '健康未知' },
+}
+
 export default function Overview() {
-  const { system, brain, safety, robot, events, runs, connected, refresh } = useConsole()
+  const { system, brain, safety, robot, events, runs, health, connected, refresh } = useConsole()
   const navigate = useNavigate()
   const [cmd, setCmd] = useState('')
   const [sending, setSending] = useState(false)
 
   const estop = safety?.estop
   const online = connected && system?.online
+  const st = health?.status || 'unknown'
+  const h = HEALTH[st] || HEALTH.unknown
 
   const submit = async () => {
     const text = cmd.trim()
@@ -42,7 +53,19 @@ export default function Overview() {
             <Pill tone={online ? 'green' : 'red'}>
               <Dot tone={online ? 'online' : 'disconnected'} /> {online ? 'System Online' : 'Offline'}
             </Pill>
+            <Pill tone={h.tone}>
+              <Dot tone={h.dot} /> {h.text}
+            </Pill>
           </div>
+          {(st === 'stalled' || st === 'degraded') && (
+            <div className="field-hint" style={{ marginBottom: 18 }}>
+              {st === 'stalled' ? '大脑已经很久没推进一帧' : '有帧跑得比设定间隔还慢'}
+              {health?.lastTickAgeMs != null
+                ? `（距上一帧 ${(health.lastTickAgeMs / 1000).toFixed(1)}s）`
+                : ''}
+              {health?.slowFrames ? ` · 慢帧 ${health.slowFrames} 次` : ''}
+            </div>
+          )}
           <h1 className="hero-title">ARGOS</h1>
           <p className="hero-sub">Intelligent robotics runtime. One sentence in, guarded motion out.</p>
           <div className="hero-actions">

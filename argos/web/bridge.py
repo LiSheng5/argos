@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from typing import Optional
+from typing import Dict, Optional
 
 from argos.brain import compile_command
 from argos.web import telemetry as tel
@@ -94,15 +94,21 @@ class Console:
 
     def __init__(self, brain, bus: Optional[EventBus] = None,
                  store: Optional[Store] = None,
-                 executor_kind: Optional[str] = None) -> None:
+                 executor_kind: Optional[str] = None,
+                 tick_tracker=None) -> None:
         self.brain = brain
         self.bus = bus or EventBus()
         self.store = store or default_store()
         self.executor_kind = (executor_kind
                               or os.environ.get("ROBOT_EXECUTOR", "sim"))
+        self.tick_tracker = tick_tracker    # 健康门（见 health()；None = 未启用）
         self.active_run: Optional[Run] = None
         self.last_decision: Optional[SafetyDecision] = None
         self.started_at = time.time()
+        # last-value 快照（借鉴 Microduck）：tick 每帧写，读端点只读它 ——
+        # 真机上 executor.pose() 慢/卡就不会再拖住 HTTP。
+        self._last_state: Optional[Dict] = None
+        self._last_state_at: Optional[float] = None
         # 并发保护：submit 走 to_thread、tick_sink 走 tick 线程，两者都会读写
         # active_run。锁只包"读写 active_run 引用"的短临界区，**持锁时绝不调
         # brain** —— 否则与 brain._lock 形成 AB-BA 死锁（tick 持 brain 锁 → apply
@@ -197,8 +203,12 @@ class Console:
     # ── tick → Run 推进 ─────────────────────────────────
 
     def tick_sink(self, ev) -> None:
-        """挂在 server 的 tick 循环上：每帧的转换事件推进当前 Run。"""
+        """挂在 server 的 tick 循环上：每帧的转换事件推进当前 Run。
+
+        顺带刷新 last-value 快照 —— 无论这一帧有没有事件，健康时都有新快照。
+        """
         self._watch_memory()
+        self._refresh_state()
         if not ev:
             return
         if "started" in ev:
@@ -289,6 +299,37 @@ class Console:
             self.bus.emit(EV_MEMORY_UPDATED, CAT_MEMORY,
                           "Memory updated.")
 
+    # ── last-value 快照（读端点专用；锁内不调 brain）──────────
+
+    def _refresh_state(self) -> None:
+        """每帧把最新机器人状态存成 last-value 快照。
+
+        先取 observe()（可能碰执行器）**再**进锁 —— 持 _lock 时绝不调 brain，
+        这是避开与 brain._lock 形成 AB-BA 死锁的前提（见 _lock 注释）。
+        执行器抽风 → 保留上一次快照（宁可旧，不可断）。
+        """
+        try:
+            pose = self.brain.backend.observe() or {}
+        except Exception:
+            return
+        with self._lock:
+            self._last_state = dict(pose)
+            self._last_state_at = time.time()
+
+    def state_snapshot(self, stale_after: Optional[float] = None) -> Optional[Dict]:
+        """带锁读快照；从未有过（或超过 stale_after 秒）→ None，调用方自行兜底。"""
+        with self._lock:
+            if self._last_state is None:
+                return None
+            if (stale_after is not None and self._last_state_at is not None
+                    and time.time() - self._last_state_at > stale_after):
+                return None
+            return dict(self._last_state)
+
+    def offline_state(self) -> dict:
+        """读超时 / 执行器不响应时的诚实骨架（连接断开、数据全 null）。"""
+        return tel.offline_state(self.brain, self.profile())
+
     # ── 控制（全部走现有路径）────────────────────────────
 
     def estop(self, on: bool = True) -> None:
@@ -310,16 +351,32 @@ class Console:
         return self.store.get_camera()
 
     def robot_state(self) -> dict:
-        return tel.robot_state(self.brain, self.profile())
+        return tel.robot_state(self.brain, self.profile(),
+                               pose=self.state_snapshot(),
+                               runtime_state=getattr(self.brain, "state", None))
 
     def telemetry(self) -> dict:
-        return tel.telemetry(self.brain)
+        return tel.telemetry(self.brain, pose=self.state_snapshot())
 
     def brain_state(self) -> dict:
         return tel.brain_state(self.brain, self.executor_kind)
 
     def safety_state(self) -> dict:
         return tel.safety_state(self.brain, self.last_decision)
+
+    def health(self) -> dict:
+        """系统健康（健康门）：看 tick 循环有没有跟上，而不是进程是否活着。
+
+        tracker 未挂 → `unknown`（诚实，不谎报 ok）；观测层自己坏了同理 ——
+        不能让 Console 的一次异常把 WS 推送拖垮。
+        """
+        if self.tick_tracker is None:
+            return {"status": "unknown", "ts": now()}
+        try:
+            return {"status": self.tick_tracker.status(),
+                    **self.tick_tracker.snapshot(), "ts": now()}
+        except Exception:
+            return {"status": "unknown", "ts": now()}
 
     def snapshot(self) -> dict:
         """WS 刚连上时给一份全量，避免空白页等第一次推送。"""

@@ -31,11 +31,13 @@ class WebSocketHub:
                  bus,
                  snapshot: Optional[Callable[[], dict]] = None,
                  robot_state: Optional[Callable[[], dict]] = None,
-                 telemetry: Optional[Callable[[], dict]] = None) -> None:
+                 telemetry: Optional[Callable[[], dict]] = None,
+                 health: Optional[Callable[[], dict]] = None) -> None:
         self.bus = bus
         self._snapshot = snapshot
         self._robot_state = robot_state
         self._telemetry = telemetry
+        self._health = health
         self._clients: Set[WebSocket] = set()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._task = None
@@ -47,15 +49,18 @@ class WebSocketHub:
         await ws.accept()
         self._clients.add(ws)
         self._loop = asyncio.get_running_loop()
-        # telemetry 循环懒启动：有人连才跑，且不用去动 server 的 lifespan
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self.telemetry_loop())
+        # 先给全量快照，再启动分频推送 —— 顺序不能反：snapshot 要 await to_thread，
+        # 若 telemetry_loop 已先启动，它会抢在前面推 robot.state，客户端收到的第一条
+        # 就不是 snapshot 了（前端"先全量再增量"的假设会被打破）。
         if self._snapshot is not None:        # 刚连上先给一份全量，避免空白页
             try:
                 snap = await asyncio.to_thread(self._snapshot)
                 await ws.send_json({"type": "snapshot", "data": snap})
             except Exception:
                 pass
+        # telemetry 循环懒启动：有人连才跑，且不用去动 server 的 lifespan
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self.telemetry_loop())
 
     def disconnect(self, ws: WebSocket) -> None:
         self._clients.discard(ws)
@@ -95,7 +100,7 @@ class WebSocketHub:
     async def telemetry_loop(self) -> None:
         period_state = 1.0 / STATE_HZ
         period_tele = 1.0 / TELEMETRY_HZ
-        last_state = last_tele = 0.0
+        last_state = last_tele = last_health = 0.0
         while True:
             if not self._clients:             # 没人看就不采样
                 await asyncio.sleep(0.2)
@@ -111,4 +116,9 @@ class WebSocketHub:
                 last_tele = t
                 await self.broadcast("robot.telemetry",
                                      await asyncio.to_thread(self._telemetry))
+            # 慢变量：健康门与 telemetry 同频（1Hz）—— 大脑卡住时前端才看得到
+            if self._health is not None and t - last_health >= period_tele:
+                last_health = t
+                await self.broadcast("system.health",
+                                     await asyncio.to_thread(self._health))
             await asyncio.sleep(_IDLE_SLEEP)

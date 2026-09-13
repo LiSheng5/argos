@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
@@ -65,12 +66,17 @@ def default_brain() -> RobotBrain:
     return RobotBrain(executor=build_executor(kind), memory_path=store)
 
 
-async def _tick_loop(brain: RobotBrain, sink=None) -> None:
+async def _tick_loop(brain: RobotBrain, sink=None, tracker=None) -> None:
     """自主循环：每帧恰一步（Dagent _tick_loop 同款，随 lifespan 启停）。
 
     sink（可选）：每帧把 brain.tick() 的返回事件交给回调 —— Web Console 的
     Event Bus 就挂在这儿。**默认 None 时与原来逐字等价**，现有测试守着这条。
     回调里的异常一律吞掉：观测层出任何问题都不能影响大脑继续跑。
+
+    tracker（可选）：每帧把"本帧耗时"喂给它（鸭子类型，只要有 record(ms, interval_ms)），
+    供 /api/system/health 判断循环有没有跟上频率 —— 而不是只看进程还活着。
+    None 时与旧行为一致；写入失败只打印，绝不影响大脑。这也让 server.py
+    **不需要 import web 层**（原始层与展示层解耦）。
 
     **必须走 to_thread**（评审 P0-2）：brain.tick() 会一路同步调用到执行器，
     DdsEntity 一个 move_to 最长 15s、一次巡逻更久。直接在事件循环里调会把
@@ -79,33 +85,46 @@ async def _tick_loop(brain: RobotBrain, sink=None) -> None:
     """
     try:
         while True:
+            interval = _tick_interval()
+            t0 = time.perf_counter()
             ev = await asyncio.to_thread(brain.tick)
+            if tracker is not None:
+                try:
+                    tracker.record((time.perf_counter() - t0) * 1000.0,
+                                   interval * 1000.0)
+                except Exception as exc:
+                    print(f"[tick] 健康追踪写入失败（不影响大脑）：{exc}")
             if sink is not None:
                 try:
                     sink(ev)
                 except Exception as exc:
                     print(f"[tick] 事件回调异常已隔离：{exc}")
-            await asyncio.sleep(_tick_interval())
+            await asyncio.sleep(interval)
     except asyncio.CancelledError:
         pass
 
 
-def build_app(brain: RobotBrain | None = None, tick_sink=None) -> FastAPI:
+def build_app(brain: RobotBrain | None = None, tick_sink=None,
+              tick_tracker=None) -> FastAPI:
     """装配 app。brain 可注入（测试用）；tick 循环只进 lifespan ——
     TestClient 不进 with 上下文则不启动（测试确定性，Dagent 同款取舍）。
 
     tick_sink：给 Web Console 的事件回调，None 时与旧签名行为一致。
+    tick_tracker：可选的 tick 健康记录仪（鸭子类型，只要有 record(ms, interval_ms)），
+      None 时与旧行为逐字等价。
     """
     brain = brain or default_brain()
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
-        task = asyncio.create_task(_tick_loop(brain, tick_sink))
+        task = asyncio.create_task(_tick_loop(brain, tick_sink, tick_tracker))
         yield
         task.cancel()
 
     app = FastAPI(title="ArgOS", lifespan=_lifespan)
     app.state.brain = brain
+    # 供 /api/system/health 读（None = 未启用健康门，端点保持旧形状）
+    app.state.tick_tracker = tick_tracker
 
     @app.post("/api/command", dependencies=[Depends(_verify_origin)])
     async def api_command(req: Request):

@@ -27,6 +27,28 @@ from argos.web.upload import ImageStore
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _KEY_FILE = _REPO_ROOT / "api_key.txt"
 
+# 读端点超时（秒）。`to_thread` 只把阻塞挪到线程里，请求本身还是会一直等 ——
+# 这里再加一层：executor 卡死时宁可返回降级骨架，也不让 HTTP 永久挂起
+# （借鉴 Microduck「配置面不能被控制面拖死」的隔离思想）。
+_READ_TIMEOUT = 2.0
+
+
+def _read_timeout() -> float:
+    """读超时可配（`ARGOS_READ_TIMEOUT`），无效值回退默认。"""
+    try:
+        return float(os.environ.get("ARGOS_READ_TIMEOUT", "") or _READ_TIMEOUT)
+    except ValueError:
+        return _READ_TIMEOUT
+
+
+async def _read_or(read_fn, fallback_fn):
+    """带超时的读：正常 → read_fn() 的结果；超时/异常 → fallback_fn()（HTTP 仍 200）。"""
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(read_fn),
+                                      timeout=_read_timeout())
+    except Exception:
+        return fallback_fn()
+
 
 def register(app, console, images: ImageStore, camera: CameraService, hub):
     """把 Console 的路由挂到现有 app 上。"""
@@ -50,7 +72,17 @@ def register(app, console, images: ImageStore, camera: CameraService, hub):
 
     @app.get("/api/system/health", dependencies=[Depends(_verify_origin)])
     async def api_health():
-        return {"status": "ok", "ts": now()}
+        """真实健康检查（健康门）：看 tick 循环有没有跟上频率，而不是只看进程还活着。
+
+        未挂载 tracker（旧装配 / 老测试）→ 保持旧形状（status=ok），不破坏既有调用方。
+        """
+        tracker = getattr(app.state, "tick_tracker", None)
+        if tracker is None:
+            return {"status": "ok", "ts": now()}
+        try:
+            return {"status": tracker.status(), "ts": now(), **tracker.snapshot()}
+        except Exception as exc:                  # 观测层自己坏了，也别拖垮端点
+            return {"status": "unknown", "ts": now(), "error": str(exc)}
 
     @app.get("/api/brain", dependencies=[Depends(_verify_origin)])
     async def api_brain():
@@ -59,23 +91,37 @@ def register(app, console, images: ImageStore, camera: CameraService, hub):
         走 to_thread：tick 线程在并发改写 brain 状态，同步读既会阻塞事件循环、
         又可能读到半更新态（与 P0-2 同源教训）。
         """
-        return await asyncio.to_thread(console.brain_state)
+        return await _read_or(
+            console.brain_state,
+            lambda: {"state": "unknown", "status": "unknown", "tick": 0,
+                     "activity": "", "pending": "",
+                     "executor": console.executor_kind,
+                     "llmEnabled": False, "memoryCount": 0})
 
     # ── Robot ───────────────────────────────────────────
 
     @app.get("/api/robot", dependencies=[Depends(_verify_origin)])
     async def api_robot():
-        return await asyncio.to_thread(
-            lambda: {"profile": to_dict(console.profile()),
-                     "state": console.robot_state()})
+        def _read():
+            return {"profile": to_dict(console.profile()),
+                    "state": console.robot_state()}
+
+        def _fallback():
+            return {"profile": to_dict(console.profile()),
+                    "state": console.offline_state()}
+
+        return await _read_or(_read, _fallback)
 
     @app.get("/api/robot/state", dependencies=[Depends(_verify_origin)])
     async def api_robot_state():
-        return await asyncio.to_thread(console.robot_state)
+        return await _read_or(console.robot_state, console.offline_state)
 
     @app.get("/api/robot/telemetry", dependencies=[Depends(_verify_origin)])
     async def api_robot_telemetry():
-        return await asyncio.to_thread(console.telemetry)
+        return await _read_or(
+            console.telemetry,
+            lambda: {"battery": None, "temperature": None, "cpu": None,
+                     "memory": None, "ts": now()})
 
     @app.post("/api/robot/profile", dependencies=[Depends(_verify_origin)])
     async def api_robot_profile(req: Request):

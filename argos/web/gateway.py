@@ -23,24 +23,32 @@ from argos.web.api import register
 from argos.web.bridge import Console
 from argos.web.camera import CameraService
 from argos.web.events import EventBus
+from argos.web.health import TickTracker
 from argos.web.store import Store, default_store
 from argos.web.upload import ImageStore
 from argos.web.ws import WebSocketHub
 
 
 def build_console_app(brain=None, store=None, db_path: str | None = None,
-                      executor_kind: str | None = None):
+                      executor_kind: str | None = None, tracker=None):
     brain = brain or default_brain()
     store = store or (Store(db_path) if db_path else default_store())
 
+    # 健康门：记录 tick 耗时（可注入，测试用假时钟）—— 既给 /api/system/health，
+    # 也由 Console 经 WS 推出去。None → 自己建一个。
+    tracker = tracker or TickTracker()
+
     bus = EventBus()
-    console = Console(brain, bus=bus, store=store, executor_kind=executor_kind)
+    console = Console(brain, bus=bus, store=store, executor_kind=executor_kind,
+                      tick_tracker=tracker)
     hub = WebSocketHub(bus,
                        snapshot=console.snapshot,
                        robot_state=console.robot_state,
-                       telemetry=console.telemetry)
+                       telemetry=console.telemetry,
+                       health=console.health)
 
-    app = build_app(brain=brain, tick_sink=console.tick_sink)
+    app = build_app(brain=brain, tick_sink=console.tick_sink,
+                    tick_tracker=tracker)
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=r"http://(127\.0\.0\.1|localhost)(:\d+)?",
