@@ -107,6 +107,7 @@ python -m pytest tests -q -p no:cacheprovider
 | [MuJoCo](https://github.com/google-deepmind/mujoco) | Google DeepMind | 物理引擎——替身背后的牛顿定律计算器 |
 | [CycloneDDS](https://github.com/eclipse-cyclonedds/cyclonedds) | Eclipse 基金会 | DDS 通信的底层传输 |
 | [OpenClaw Skill 规范](https://github.com/openclaw/openclaw) | 开源社区 | 把"狗大脑"封装成对外技能 |
+| [Microduck](https://github.com/pollen-robotics/microduck) | Pollen Robotics（Hugging Face） | 板端健壮性设计的参考：健康门「看循环有没有跟上，而不是进程还活着」、只读 last-value 缓存（**其软件栈 Apache-2.0 开源，硬件设计不开源**） |
 | [NPCSidekick](https://github.com/LiSheng5/npcsidekick) | 我自己的开源项目 | 记忆系统的出处：语义检索 / 反思归纳 / 遗忘合并，完整移植自它 |
 
 ## 致谢
@@ -115,6 +116,7 @@ python -m pytest tests -q -p no:cacheprovider
 - **Google DeepMind**：MuJoCo 物理引擎
 - **Eclipse Foundation**：CycloneDDS
 - **OpenClaw 社区**：技能规范
+- **Pollen Robotics / Hugging Face**：Microduck 开源的板端运行时设计——健康门与只读 last-value 缓存的思路参考（软件栈 Apache-2.0 开源，硬件设计不开源）
 
 ## 文档
 
