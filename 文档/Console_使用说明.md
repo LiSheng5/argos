@@ -43,29 +43,55 @@ npm run dev
 4. **所有控制过 SafetyGate**：E-stop / 移动 / 取消都走现有 `brain.estop()` /
    `RobotBackend.apply()`，Web 没有捷径。
 
-## 四、架构（Web 层 = 包一层，不进去改）
+## 四、架构
 
-```
-argos/web/
-  models.py      数据模型（camelCase；缺数据 = null）
-  events.py      Event Bus（订阅者隔离 + 环形缓冲）
-  store.py       Run / Event / Settings → SQLite（argos/store/argos.db）
-  telemetry.py   现有状态 → 统一 RobotState
-  upload.py      机器人图（magic bytes 校验 + uuid 文件名）
-  camera.py      MJPEG（外部 URL 转发 / 本机 USB / 无源 No camera signal）
-  bridge.py      Console 中枢 + InstrumentedBackend（包装埋点，返回值透传）
-  ws.py          /api/ws（Event Bus 订阅者 + 分频推送）
-  api.py         REST 路由
-  gateway.py     装配入口（只在它这里加 CORS）
-```
+模块清单与埋点方式见 **`文档/架构.md` §10**（单一信息源，此处不重复维护）。
 
-埋点方式：**不改 brain/safety/executor 内部** —— 安全闸裁决靠包装 `brain.backend`，
-tick 靠 `server.py` 多带一个可选 sink 回调，指令靠 Web 层自己包 `try_command`。
+一句话概括：**不改 brain / safety / executor 内部逻辑** —— 安全闸裁决靠包装
+`brain.backend`，tick 靠 `server.py` 多带一个可选 sink 回调，指令靠 Web 层自己包
+`try_command`。
 
 ## 五、测试
 
 ```bash
 python -m pytest tests -q -p no:cacheprovider
-# 新增 tests/test_web_console.py（10 例）：原有端点不回归、Run 全链路、
-# 急停过闸、坏图拒绝、WS 快照、缺传感器=null
+# 与 Console 相关的两个文件：test_web_console.py（10）旧端点不回归 / Run 全链路 /
+# 急停过闸 / 坏图拒绝 / WS 快照 / 缺传感器=null；test_tick_health.py（11）健康门四态 + 接线钉。
+# 当前总基线见 文档/小结_20260829.md §1（2026-09-15 实测 168 passed + 3 skipped）。
 ```
+
+## 六、数据从哪来（能拿到 / 拿不到）
+
+> 原则：**Web 只是 Observation + Control Layer，不重新实现 ArgOS**。
+> 下面每一条都来自实际代码（不是架构设想），"拿不到"的也照实写。
+
+### 6.1 现在能拿到的
+
+| 数据 | 来源（代码位置） | 获取方式 | 备注 |
+|---|---|---|---|
+| 位姿 x / y / yaw | `executor.pose()` | 拉模式 | **唯一真源**，四种执行器都走它 |
+| 电量 `battery_pct` | 同上 | 拉 | sim / mujoco 恒 100；**真机高层 sportmode 没有电量** → 字段可能整个缺失 |
+| 急停 `estop` | `pose()['estop']` 与 `brain.backend.gate.estop` | 拉 | 两处可能不同步，**以 gate 为准**（gate 才是拒单的那个） |
+| 夹爪 `gripper` | `pose()['gripper']` | 拉 | dds / real 上 grab/release 恒 False（没装手臂） |
+| 大脑状态 | `brain.status()` → `state / tick / activity / pending / estop / pose` | 拉 | `state` ∈ idle / working / resting |
+| 记忆全量 | `brain.memory` | 拉 | `List[Dict]`，JSON 可编辑 |
+| 记忆检索 | `recent(n)` / `recall(query, top_k)` | 拉 | recency + BM25 + importance 加权 |
+| 命令回复 | `brain.try_command(text)` → `str` | 请求时 | 已含 LLM 措辞或规则兜底 |
+| tick 转换事件 | `brain.tick()` → `{started, completed, failed, reflected}` | 每 3s 一帧 | 原本返回即丢（Run/Event 要新建的根因），现由 Event Bus 留存 |
+| tick 健康 | `web/health.py::TickTracker` | 拉 + WS 1Hz | `lastTickAgeMs / lastFrameMs / avgFrameMs / slowFrames / window` |
+| 安全闸裁决 | `RobotBackend.apply()` → `(ok, reason)` | 执行时 | 历史由 `InstrumentedBackend` 埋点留存 |
+| 执行器种类 | `ROBOT_EXECUTOR` 环境变量 | 启动时定 | sim / mujoco / dds / real |
+| LLM 可用性 | `llm.enabled()`、`llm.base_url`、`llm.model` | 拉 | 只有"有没有 key"，**没有上次调用的结果/耗时** |
+| 地点表 | `brain.places` | 静态 | 充电桩 / 家 / 桌边 / 门口 |
+
+### 6.2 拿不到的（Web 想要，但现有系统根本不产生）
+
+| 数据 | 现状 | 处理办法 |
+|---|---|---|
+| 连接状态 / lastSeen / latency | 无 | sim、mujoco 视为 `connected`；`latencyMs` 恒 null |
+| 温度 `temperature` | 无 | 恒 null，UI 显示 `—` |
+| CPU / 内存占用 | 无 | 恒 null，UI 显示 `—` |
+| Camera 画面 | 无（SDK 里有 `VideoClient.GetImageSample()`，ArgOS 一行没接） | 外部 MJPEG URL / 本机 USB 摄像头；无源时 `No camera signal` |
+| Run / Task / Event 历史 | 无 | 新建（Run Store + Event Bus） |
+| 安全闸历史裁决 | 无 | 新建：在 `backend.apply()` 处埋点记录 |
+| 机器人外观图 | 无 | 新建：用户上传，与 camera 严格分两个字段 |
