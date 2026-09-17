@@ -6,7 +6,8 @@
 ArgOS 把"游戏 NPC 大脑"移植到了机器狗身上：文本指令 → 编译 → 落账 → 安全闸 → 执行 → 到点记账 → 记忆回流。大脑与执行器分离，真机到手只需换执行器，大脑一行不改。
 
 **诚实声明：**
-- ✅ 大脑层（编译/落账/安全/记忆/服务）在物理仿真里完整验证，168 项测试通过 + 3 项跳过（裸环境实测 2026-09-15；DDS 三例需宇树上游 SDK，装好后 171 全绿）
+- ✅ 大脑层（编译/落账/安全/记忆/服务）在物理仿真里完整验证，218 项测试通过 + 3 项跳过（裸环境实测 2026-09-17；DDS 三例需宇树上游 SDK，装好后 221 全绿）
+- ✅ SIM-first Embodied Agent Runtime 已跑通闭环：Simulator 是一等公民，失败可注入、反思会改下一次计划（见下节）
 - ✅ 真机执行器（高层 SportClient + 闭环控制器 + 断链看门狗）代码与单测就绪
 - ✅ Web Console（观察 + 控制层）可用，只观测与下发指令、不决策
 - ❌ **尚未在真机上运行**——真机联调清单见 `文档/真机安全清单.md`
@@ -31,6 +32,31 @@ ArgOS 把"游戏 NPC 大脑"移植到了机器狗身上：文本指令 → 编�
 ```
 
 核心设计哲学：**LLM 只提议、代码决定执行**——所有动作必须命中运动原语白名单并过安全闸，LLM 零关节/零文件直控。
+
+## Embodied Agent Runtime（SIM-first，2026-09-17 起）
+
+**没有机器人，不代表做不了真正的机器人 Agent 项目。** ArgOS 现在的主线是把它做成
+与具体机器人无关的 Embodied Agent Runtime，Simulator 是第一个 embodiment：
+
+```
+User Goal → Brain → Planner → ActionProposal → SafetyGate → Executor
+   → EmbodimentBackend（现在是 SimulatorBackend，未来 Go2Backend）
+   → Observation → WorldState → Reflection → Memory → Replan
+```
+
+- **Brain 不认识任何具体机器人**：只依赖 `Observation / Action / ActionResult / WorldState /
+  EmbodimentCapabilities` 五个抽象（`argos/agent/interfaces.py`）。将来换身体只换 backend，上层零改动。
+- **WorldState 是唯一真相源**：只有 Backend 能写；Planner 拿到的是**不可变投影**（改就抛错）。
+  LLM 只能提 `ActionProposal`，不能直接改世界。
+- **可以主动制造失败**：九类失败注入（`argos/sim/failure_injector.py`），失败原因**结构化**
+  （不再是旧系统那个无法分类的裸 `False`）。
+- **反思真的改变下一次计划**：失败 → Lesson（`trigger / avoid / prefer / evidence / confidence`）
+  → Planner 检索 → 换路线。闭环有测试钉着（`tests/test_closed_loop.py`）：
+  第 1 次撞北线 → 换南线到达；第 2 次再撞 → 产出 Lesson；**第 3 次在规划阶段就避开北线，零失败到达**。
+- ⚠️ **全部是仿真**：不接硬件、不伪造 real executor。真机代码（`real_sport.py` / `dds_entity.py` /
+  `sim/mujoco.py`）已冻结，仅作为未来 RobotBackend 的素材保留。
+
+完整审计与缺口清单见 `文档/SIM_FIRST_AUDIT.md`。
 
 ## 性格（可选 LLM）
 
@@ -91,8 +117,8 @@ cd console && npm install && npm run dev       # 前端 localhost:5173
 
 ```bash
 python -m pytest tests -q -p no:cacheprovider
-# 168 passed, 3 skipped        ← 裸环境实测（2026-09-15）
-# 装了宇树上游 SDK（unitree_sdk2py，见 requirements.txt 第 4 节）后为 171 passed, 0 skipped
+# 218 passed, 3 skipped        ← 裸环境实测（2026-09-17）
+# 装了宇树上游 SDK（unitree_sdk2py，见 requirements.txt 第 4 节）后为 221 passed, 0 skipped
 # 注：test_dds_sim / test_dds_walk / test_dds_closed_loop 三例跑真实物理仿真 + DDS 闭环，
 #     对机器负载敏感（走位与关节收敛有随机性），负载高时会失败 —— 与大脑层改动无关，
 #     排查记录见 文档/反思层有效性探测_20260905.md §5.5
@@ -124,6 +150,7 @@ python -m pytest tests -q -p no:cacheprovider
 | 想看什么 | 读哪份 |
 |---|---|
 | 顶层架构 / 复用接缝 / 安全设计 | `文档/架构.md` |
+| **SIM-first 转向审计（缺口清单）** | `文档/SIM_FIRST_AUDIT.md` |
 | 可行性调研 | `文档/ai搜索后相关项目后做的可行性调研.md` |
 | 上狗前必读 | `文档/真机安全清单.md` |
 | 开发小结与实测数据（含逐文件用例数） | `文档/小结_20260829.md` |
