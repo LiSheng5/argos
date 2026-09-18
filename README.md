@@ -6,7 +6,7 @@
 ArgOS 把"游戏 NPC 大脑"移植到了机器狗身上：文本指令 → 编译 → 落账 → 安全闸 → 执行 → 到点记账 → 记忆回流。大脑与执行器分离，真机到手只需换执行器，大脑一行不改。
 
 **诚实声明：**
-- ✅ 大脑层（编译/落账/安全/记忆/服务）在物理仿真里完整验证，301 项测试通过 + 3 项跳过（裸环境实测 2026-09-18；DDS 三例需宇树上游 SDK，装好后 304 全绿）
+- ✅ 大脑层（编译/落账/安全/记忆/服务）在物理仿真里完整验证，331 项测试通过 + 3 项跳过（裸环境实测 2026-09-18；DDS 三例需宇树上游 SDK，装好后 334 全绿）
 - ✅ SIM-first Embodied Agent Runtime 已跑通闭环：Simulator 是一等公民，失败可注入、反思会改下一次计划（见下节）
 - ✅ 真机执行器（高层 SportClient + 闭环控制器 + 断链看门狗）代码与单测就绪
 - ✅ Web Console（观察 + 控制层）可用，只观测与下发指令、不决策
@@ -61,6 +61,10 @@ User Goal → Brain → Planner → ActionProposal → SafetyGate → Executor
   只记忆不反思学得更快但**会把一次偶发当成永久教训、从此绕远路**。
 - **一条命令跑完整系统**：`python -m argos.run --backend simulator --goal "去充电站"`。
   换身体只换 `--backend`（`--backend go2` 会**如实报未实现**，绝不写假真机代码冒充）。
+- **感知与输入也是可实验的**：`argos/sensors/`（定位噪声/电量量化/**探测半径**/失灵）——
+  **传感器读不到时闸门 fail-closed 拒绝移动**，宁可不动也不凭猜的坐标走；
+  `argos/input/`（`--input speech --say "麻烦帮我去一下充电站吧"`）是**规则抽取的口语模拟**，
+  **不是语音识别**；听不懂会明确报错，**绝不猜一个目标去执行**。
 - **可解释**：`python -m argos.demo` 导出逐步 JSON trace 与 `文档/demo_trace.md`，
   没有的字段写 `null`，不编造。
 - ⚠️ **全部是仿真**：不接硬件、不伪造 real executor。真机代码（`real_sport.py` / `dds_entity.py` /
@@ -127,8 +131,8 @@ cd console && npm install && npm run dev       # 前端 localhost:5173
 
 ```bash
 python -m pytest tests -q -p no:cacheprovider
-# 301 passed, 3 skipped        ← 裸环境实测（2026-09-18）
-# 装了宇树上游 SDK（unitree_sdk2py，见 requirements.txt 第 4 节）后为 304 passed, 0 skipped
+# 331 passed, 3 skipped        ← 裸环境实测（2026-09-18）
+# 装了宇树上游 SDK（unitree_sdk2py，见 requirements.txt 第 4 节）后为 334 passed, 0 skipped
 # 注：test_dds_sim / test_dds_walk / test_dds_closed_loop 三例跑真实物理仿真 + DDS 闭环，
 #     对机器负载敏感（走位与关节收敛有随机性），负载高时会失败 —— 与大脑层改动无关，
 #     排查记录见 文档/反思层有效性探测_20260905.md §5.5

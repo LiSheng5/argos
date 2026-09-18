@@ -66,12 +66,12 @@ Wave 2 得到的两条新结论（都进了 `文档/BENCHMARK.md` §4 自动推�
    在这个世界规模下，把"避开"升级成硬策略并没有额外收益。
 2. **复核的收益取决于预算**：宽裕时 10.80→9.20 动作（赚），紧时成功率 50%→25%（亏）。
 
-### Wave 3 · 感知与评估补齐 —— 🟡 部分完成
+### Wave 3 · 感知与评估补齐 —— ✅ 已完成（2026-09-18）
 | 项 | 内容 | 状态 |
 |---|---|---|
 | **C1** | 阈值/周期**扫参** + 敏感度报告（D5）| ✅ `argos/benchmark/sweep.py` + `文档/SWEEP.md` |
-| **A3** | `argos/sensors/`：SimVision / SimBattery / SimPose / SimObstacle（§19）| ⬜ 待做 |
-| **A4** | 语音层：`TextInputBackend` / `SimulatedSpeechBackend`（§20）| ⬜ 待做 |
+| **A3** | 感知层 `argos/sensors/`：SimPose / SimBattery / SimObstacle / SimVision（§19）| ✅ |
+| **A4** | 输入层 `argos/input/`：`TextInputBackend` / `SimulatedSpeechBackend`（§20）| ✅ |
 | **B6** | 变点检测（ADWIN 简化版）替代固定周期（D3）| ⬜ 待做（见下方判断）|
 | **B5** | Evaluator 独立成模块（D7）| ⏸ **本轮主动推迟**（见下方判断）|
 
@@ -81,6 +81,22 @@ Wave 2 得到的两条新结论（都进了 `文档/BENCHMARK.md` §4 自动推�
 - ⚠️ **不要因为"0 最高"就把复核关掉**：全局平均最优 ≠ 每个场景最优。
   `two_strikes_then_clear` 族里复核是赚的（10.80→9.20 动作），`learn_to_survive` 族里是亏的（50%→25%）。
   **结论是"按预算决定"，不是"关掉最好"。**
+
+#### A3 感知层要点（`argos/sensors/`）
+- **感知是投影，不是写入**：`observe()` 在世界状态之上打一层传感器滤镜；
+  不配传感器 = 上帝视角直读（与从前逐字一致 → 432 组 benchmark 数字**逐位未变**）。
+- **传感器失灵 → 闸门 fail-closed**：拿不到定位/电量就拒绝移动（STOP/WAIT 仍放行，不能把自己锁死）。
+  闸门看的是**感知到的世界**，不是真值 —— 拿不到就该拒绝，而不是凭真值放行。
+- **探测半径**：看不见远处障碍时 agent **只能撞了才知道** —— 这正是"只能靠试错学"的成立条件。
+- ⚠️ 踩坑记录：先把传感器读到的 tuple 直接写进 WorldState（而 `view()` 要 dict）→ 一读就炸；
+  改成"感知做投影"后统一了形状转换（`state.as_dict`）。另外 dataclass 属性**不能叫 `field`**，
+  会遮蔽 `dataclasses.field`。
+
+#### A4 输入层要点（`argos/input/`）
+- `text` 直通 / `speech` 口语规则抽取（去客套词 → 找"去/到/前往"后的地点短语 → 交给 resolver 校验）。
+- ⚠️ **这不是语音识别**（不接 ASR、不接 LLM），只是口语模拟；**听不懂返回 `None`，绝不猜**。
+- CLI：`python -m argos.run --input speech --say "麻烦帮我去一下充电站吧"`；
+  听不懂 → 退出码 2 + 明确报"没听懂"，**不执行任何猜测**。
 
 #### 两个"暂时不做"的判断（写下来，免得被当成忘了）
 - **B5（Evaluator 独立）⏸**：现在"判分"就等于 `ActionResult`，把它抽成接口**在当前世界里
