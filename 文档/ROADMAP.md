@@ -17,7 +17,7 @@
 | §18 | 暂时不要做（真机 / ROS2 / 复杂 GUI…） | ✅ | 全程遵守，真机代码冻结 |
 | §23 | benchmark 数据表 | ✅ | **24 场景 × 6 臂 × 3 seed = 432 组** |
 | §28 | correctness > complexity | ✅ | 旧代码零改、零回归守住 |
-| **§9** | **Memory 三类型（Episodic / Semantic / Procedural）** | ❌ | 现在只有一个 `LessonStore` |
+| **§9** | Memory 三类型（Episodic / Semantic / Procedural） | ✅ | `memory_agent.py::AgentMemory`（Wave 2 已完成）|
 | **§19** | **感知 SensorBackend（SimVision/Battery/Pose/Obstacle）** | ❌ | 无 `argos/sensors/` |
 | **§20** | **语音 TextInputBackend / SimulatedSpeechBackend** | ❌ | goal 直接传字符串，没有 backend 抽象 |
 | **§21** | **统一入口 `python -m argos.run --backend simulator`** | ❌ | 只有 `demo.py` / `benchmark`，没有 `run.py` |
