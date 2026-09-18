@@ -26,6 +26,29 @@ ActionProposal → SafetyGate → SimulatorBackend → ActionResult(reason)
 关键点：**写与读必须落在同一个 store 上**。旧系统的病正是"写在一处、没人读"——
 本仓库 benchmark 实测：`reflection_only`（反思只写不读）与完全不做反思，四个指标**逐位相同**。
 
+## 1b. 三层记忆（指令 §9）
+
+反思闭环不是只有 `Lesson` 一处存储。三层各司其职（`argos/agent/memory_agent.py`）：
+
+| 层 | 存什么 | 例子 | 谁消费 | 时间尺度 |
+|---|---|---|---|---|
+| **Episodic** | 每次尝试的**原始事件**（**成败都记**） | "ep1 走 north 不顺（obstacle_blocked）/ 任务完成" | 人审阅、统计原料 | 永久保留 |
+| **Semantic** | 滑窗统计出的**规律** | "north：最近 3 次里失败 2 次（0.67）" | Planner **软降权**（只改先后） | 最近 `window` 次，旧的自然淡出 |
+| **Procedural** | 可执行的**策略** | "避开 north → 改走 south" | Planner **硬避开**（候选消失） | 够证据才升级，且可被反证失效 |
+
+三条必须遵守的设计纪律：
+
+1. **成败都要记**（`EpisodeEvent`）：只记失败就没有分母，
+   分不清"走 1 次失败 1 次"和"走 5 次失败 1 次"。
+   另外要区分 `route_ok`（这条路顺不顺）与 `episode_ok`（任务完成没）——
+   走 north 被挡、换 south 到达，是 `route_ok=False` + `episode_ok=True`。
+2. **Semantic 用滑窗，不是累计**：累计会让旧证据永久压着。
+   但**滑窗不能替代复核** —— 不去尝试就不会产生新观测，窗口永远停在旧数据上。
+   所以"主动试探"和"滑窗淡出"是互补的，不是二选一。
+3. **软降权要三道门槛**：观测数 ≥2、**失败次数 ≥2**、失败率 ≥0.5。
+   中间那道最容易被忽略：少了它，`[失败, 成功]`（失败率 0.5）就会降权，
+   等于一次偶发就改道 —— 实测踩到过。
+
 ## 2. 数据结构：一条 Lesson 里有什么
 
 | 字段 | 含义 | 为什么要它 |
@@ -72,6 +95,7 @@ ActionProposal → SafetyGate → SimulatorBackend → ActionResult(reason)
 | **周期复核** | `Reflector.revalidate_every` + `Planner.plan(probe=True)` | 每 N 个 episode **主动试探**一次被避开的路线，看环境是不是恢复了 |
 | **反证后重置证据** | `Reflector.record_success()` | 清空该路线的失败计数 —— 想复活必须**重新积累** min_hits 次独立失败 |
 | **复活** | `LessonStore.add()` 检测 `status != active` | 环境又变回去时，失效的教训可重新生效（失效 ≠ 永久作废） |
+| **干预优先** | `AgentBrain.finish()`：探针成功 → 同时 `record_success()` + **清掉该路线滑窗** | 受控干预的结果比日常观测更强。不这样做会出现两层打架：Procedural 已撤销、Semantic 还压着这条路，探针明明验通了下一步又绕回远路（实测踩到） |
 
 **实测效果**（靶场景：北线在 ep0/ep1 各被挡一次后恢复；南线是 8 途经点的超长绕路）：
 
@@ -81,6 +105,15 @@ ActionProposal → SafetyGate → SimulatorBackend → ActionResult(reason)
 | 每 2 个 episode 复核一次 | **9.20** | 0.40 |
 
 即 **用一次试探买回一条路**，且没多付失败代价。
+
+⚠️ **但复核不是免费的**（另一族"预算紧"场景实测）：
+
+| 场景族 | 不复核 | 每 2 轮复核 |
+|---|---|---|
+| 预算充裕（`two_strikes_then_clear`） | 成功率 100%，10.80 动作 | **100%，9.20 动作**（赚） |
+| 预算紧（`learn_to_survive`，单次只够走一趟） | 成功率 **50%** | **25%**（亏 —— 试探吃掉了预算） |
+
+→ **"要不要开复核"取决于预算宽紧**，不存在无条件的"复核总是更好"。
 
 ## 6. 三条"不学"的边界
 
