@@ -154,13 +154,45 @@ def _conclusions(table, results, order) -> str:
                 out.append(f"- ⚠️ 复核臂（{ar:.2f} 动作）没有比不复核（{af:.2f}）更省 —— "
                            "需要检查复核周期或反证削弱是否真的生效。")
 
+    # (2c) 复核的收益与代价（宽松预算赚、紧预算可能亏）
+    if "memory_reflection" in table and "memory_reflection_revalidate" in table:
+        loose = [r for r in results if r.kind == "transient" and "two_strikes" in r.scenario]
+        tight = [r for r in results if r.kind == "unrecoverable"]
+        parts = []
+        for tag, subset in (("预算充裕（连撞两次后恢复）", loose), ("预算紧（单次换路救不回来）", tight)):
+            if not subset:
+                continue
+            d: Dict[str, List[ScenarioResult]] = {}
+            for r in subset:
+                d.setdefault(r.config, []).append(r)
+            if "memory_reflection" in d and "memory_reflection_revalidate" in d:
+                a = d["memory_reflection"]; b = d["memory_reflection_revalidate"]
+                sa = sum(x.success_rate for x in a) / len(a)
+                sb = sum(x.success_rate for x in b) / len(b)
+                st_a = sum(x.avg_steps for x in a) / len(a)
+                st_b = sum(x.avg_steps for x in b) / len(b)
+                parts.append(f"{tag}：成功率 {sa * 100:.0f}% → {sb * 100:.0f}%，"
+                             f"动作数 {st_a:.2f} → {st_b:.2f}")
+        if parts:
+            out.append("- ⚠️ **复核不是免费的**：" + "；".join(parts) +
+                       "。预算是紧的时候，试探本身要花掉预算 —— 所以「要不要开复核」"
+                       "取决于预算宽紧，不能一概而论。")
+
     # (3) 成功率能否区分
     rates = {table[k]["success_rate"] for k in order}
     if len(rates) == 1:
-        out.append(f"- ⚠️ **成功率区分不出四组差异**（都是 {list(rates)[0] * 100:.1f}%）："
+        out.append(f"- ⚠️ **成功率区分不出各组差异**（都是 {list(rates)[0] * 100:.1f}%）："
                    "本场景集里，失败都能被「本次运行内换路」救回来，所以记忆/反思只影响"
                    "**过程代价**（重试与动作数），不影响**结果**。要区分成功率，需要"
                    "单次运行内救不回来的场景。")
+    else:
+        best = max(order, key=lambda k: table[k]["success_rate"])
+        worst = min(order, key=lambda k: table[k]["success_rate"])
+        lo, hi = table[worst]["success_rate"], table[best]["success_rate"]
+        out.append(f"- ✅ **成功率已能区分配置**：最高 `{best}`（{hi * 100:.1f}%）vs "
+                   f"最低 `{worst}`（{lo * 100:.1f}%），差 {((hi - lo) * 100):.1f} 个百分点。"
+                   "区分主要来自 `unrecoverable` 场景族（单次动作预算只够走一趟，"
+                   "现场换路救不回来）—— 这正是补场景的目的。")
 
     # (4) 谁都修不好的场景
     by_scen: Dict[str, Dict[str, ScenarioResult]] = {}

@@ -25,7 +25,12 @@ from argos.agent.interfaces import (
     Lesson,
     Pose,
 )
-from argos.agent.memory_agent import DEFAULT_MIN_CONFIDENCE, LessonStore
+from argos.agent.memory_agent import (
+    DEFAULT_MIN_CONFIDENCE,
+    AgentMemory,
+    EpisodeEvent,
+    LessonStore,
+)
 from argos.agent.planner import Plan, Planner
 from argos.agent.reflection import Reflector
 from argos.world.state import from_observation, view
@@ -74,11 +79,16 @@ class AgentBrain:
         max_steps: int = 40,
         max_retry: int = 2,
         lesson_threshold: float = DEFAULT_MIN_CONFIDENCE,
+        memory: Optional[AgentMemory] = None,
     ) -> None:
         self.backend = backend
         self.planner = planner
         self.reflector = reflector or Reflector()
-        self.store = store or self.reflector.store
+        # 三层记忆（可选）。给了就用它的 procedural 层作为"硬避开"的来源，
+        # 并用 semantic 层（滑窗失败率）做软降权 —— 这是指令 §9「Planner 按任务选不同记忆」的落点。
+        self.memory = memory
+        self.store = (memory.procedural if memory is not None
+                      else (store or self.reflector.store))
         self.max_steps = int(max_steps)
         self.max_retry = int(max_retry)
         # 读 Lesson 的置信度门槛。必须与 Reflector 写入门槛**用同一个值**，
@@ -99,17 +109,39 @@ class AgentBrain:
 
         def finish(ok: bool, stop_reason: str, plan=None,
                    steps: int = 0, failures: int = 0, replans: int = 0) -> RunResult:
-            """统一出口：顺便处理"复核成功 → 反证 → 削弱教训"。"""
+            """统一出口：处理"复核成功 → 反证"与"记一条情节记忆"。"""
             if plan is not None and plan.is_probe and ok and failures == 0:
                 # 试探的那条路线**一次都没失败** —— 说明它已经通了，撤销旧教训。
                 self.reflector.record_success(f"route:{plan.route}")
+                # 受控干预的结果**比日常观测更强**（干预式验证的要点）：
+                # 清掉该路线的滑窗，让它从"这次确证的成功"重新起算。
+                # 否则会出现两层打架：Procedural 已撤销，Semantic 还压着这条路不让走。
+                if self.memory is not None:
+                    self.memory.windows.pop(plan.route, None)
+
+            # Episodic 层：**成败都记**（Semantic 层要分母才能算失败率）
+            if self.memory is not None and plan is not None:
+                first_bad = next((t for t in trace if not t.ok), None)
+                self.memory.record_episode(EpisodeEvent(
+                    episode=self.reflector.episode_index, goal=goal,
+                    route=(trace[0].route if trace and trace[0].route else plan.route),
+                    route_ok=(failures == 0), episode_ok=ok, failures=failures,
+                    reason=(first_bad.reason if first_bad else None),
+                    detail=(first_bad.detail if first_bad else ""),
+                    sim_time=self._view().sim_time,
+                ))
+
             return RunResult(ok=ok, goal=goal, steps=steps, failures=failures,
                              replans=replans, lessons=self.store.all(), trace=trace,
                              final_pose=self._view().robot, stop_reason=stop_reason)
 
+        # Semantic 层 → 软降权（只影响路线先后顺序，不淘汰候选）
+        soft = self.memory.soft_penalty() if self.memory is not None else None
+
         v = self._view()
         plan = self.planner.plan(goal, v, self.store.active(self.lesson_threshold), caps,
-                                 probe=self.reflector.should_revalidate())
+                                 probe=self.reflector.should_revalidate(),
+                                 soft_penalty=soft)
         if plan is None:
             return finish(False, "目标无法理解，或无可用路线")
 
@@ -143,8 +175,9 @@ class AgentBrain:
 
             if retries < self.max_retry:
                 retries += 1
-                new_plan = self.planner.replan(plan, self._view(),
-                                               self.store.active(self.lesson_threshold), caps)
+                new_plan = self.planner.replan(
+                    plan, self._view(), self.store.active(self.lesson_threshold), caps,
+                    soft_penalty=(self.memory.soft_penalty() if self.memory else None))
                 if new_plan is not None:
                     plan = new_plan
                     queue = list(new_plan.proposals)

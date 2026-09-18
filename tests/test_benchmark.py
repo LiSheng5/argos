@@ -7,11 +7,11 @@
 """
 import pytest
 
-from argos.benchmark.configs import CONFIGS, config_by_name, make_agent_parts
+from argos.benchmark.configs import CONFIGS, config_by_name, make_agent_parts, make_memory
 from argos.benchmark.report import render_markdown
 from argos.benchmark.runner import run_matrix, run_scenario
 from argos.benchmark.scenarios import build_scenarios, by_name, scenario_names
-from argos.agent.memory_agent import LessonStore
+from argos.agent.memory_agent import AgentMemory, LessonStore
 
 
 # ---------- 场景库 ----------
@@ -37,23 +37,48 @@ def test_unknown_scenario_raises():
 
 # ---------- 配置 ----------
 
-def test_arms_include_a_negative_one_and_a_revalidation_one():
-    """五臂 = 指令要的四组对比 + 本轮新增的「带复核」臂。"""
+def test_arms_include_negative_and_special_purpose_ones():
+    """六臂 = 指令要的四组对比 + 复核臂 + 语义软降权臂。"""
     names = [c.name for c in CONFIGS]
-    assert names == ["planner_only", "memory_only", "reflection_only",
+    assert names == ["planner_only", "semantic_only", "memory_only", "reflection_only",
                      "memory_reflection", "memory_reflection_revalidate"]
     assert config_by_name("reflection_only").consume is False          # 故意留的负结果臂
-    assert config_by_name("memory_reflection").revalidate_every == 0   # 不复核（永久化）
+    assert config_by_name("semantic_only").semantic_only is True       # 只开软降权
+    assert config_by_name("memory_reflection").revalidate_every == 0   # 不复核（会永久化）
     assert config_by_name("memory_reflection_revalidate").revalidate_every == 2
 
 
 def test_reflection_only_writes_but_planner_cannot_read():
     """负结果臂的机制：反思写进 persistent，planner 读的是永远空的 store。"""
-    persistent = LessonStore()
-    planner_store, reflector = make_agent_parts(config_by_name("reflection_only"), persistent)
-    assert reflector.store is persistent
-    assert planner_store is not persistent
-    assert planner_store.all() == []
+    persistent = AgentMemory()
+    memory, reflector = make_agent_parts(config_by_name("reflection_only"), persistent)
+    assert reflector.store is persistent.procedural
+    assert memory.procedural is not persistent.procedural
+    assert memory.procedural.all() == []
+
+
+def test_zero_memory_arm_gets_no_semantic_leak():
+    """回归钉：零记忆臂**不许**因为共享对象而偷偷学到东西。
+
+    踩过的坑：把 memory 建在 episode 循环外，Semantic 窗口就跨 episode 共享了，
+    连 `planner_only` 都能"学会"绕开被挡的路 —— 等于给无记忆臂开了软降权。
+    """
+    persistent = AgentMemory()
+    cfg = config_by_name("planner_only")
+    persistent.windows["north"] = [False, False]      # 假装持久记忆里已有证据
+    mem = make_memory(cfg, persistent)
+    assert mem.windows == {}                          # 不共享
+    assert mem.soft_penalty() == {}
+    assert mem.procedural.all() == []
+
+
+def test_persistent_arms_do_share_semantic_windows():
+    persistent = AgentMemory()
+    persistent.windows["north"] = [False, False]
+    for name in ("memory_only", "memory_reflection", "memory_reflection_revalidate",
+                 "semantic_only"):
+        mem = make_memory(config_by_name(name), persistent)
+        assert mem.windows is persistent.windows, name
 
 
 # ---------- 可复现 ----------
@@ -113,7 +138,7 @@ def test_unfixable_scenario_stays_unfixable_and_teaches_nothing_wrong():
     for cfg in CONFIGS:
         r = run_scenario(sc, config_by_name(cfg.name), 42)
         assert r.success_rate == 0.0
-    persistent = LessonStore()
+    persistent = AgentMemory()
     planner_store, reflector = make_agent_parts(config_by_name("memory_reflection"), persistent)
     from argos.agent.interfaces import Action, ActionKind, FailReason
     reflector.record_failure(trigger="route:north", reason=FailReason.BATTERY_LOW, detail="电量低")

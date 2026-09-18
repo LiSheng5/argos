@@ -71,14 +71,22 @@ class Planner:
 
     # ---- 路线 ----
     def choose_route(self, lessons: Sequence[Lesson],
-                     exclude: Sequence[str] = ()) -> Optional[str]:
-        """选一条**没被教训点名**、也不在 exclude 里的路线。"""
+                     exclude: Sequence[str] = (),
+                     soft_penalty: Optional[dict] = None) -> Optional[str]:
+        """选路线：先**硬避开**（Procedural 教训点名的不走），再按 **软降权** 排序。
+
+        `soft_penalty`（Semantic 层的滑窗失败率）只影响**先后顺序**，不淘汰候选 ——
+        这是它和"硬避开"的本质区别：软降权是可回头的，硬避开要等反证才撤销。
+        同惩罚值时保持世界顺序（稳定排序 → 确定性）。
+        """
         avoided = {l.avoid for l in lessons}
-        for r in self.world.route_names():
-            if r in avoided or r in exclude:
-                continue
-            return r
-        return None
+        cands = [r for r in self.world.route_names()
+                 if r not in avoided and r not in exclude]
+        if not cands:
+            return None
+        if soft_penalty:
+            cands.sort(key=lambda r: soft_penalty.get(r, 0.0))
+        return cands[0]
 
     def avoided_route(self, lessons: Sequence[Lesson],
                       exclude: Sequence[str] = ()) -> Optional[str]:
@@ -90,12 +98,14 @@ class Planner:
         return None
 
     def plan(self, goal: str, view: WorldView, lessons: Sequence[Lesson],
-             caps: EmbodimentCapabilities, probe: bool = False) -> Optional[Plan]:
+             caps: EmbodimentCapabilities, probe: bool = False,
+             soft_penalty: Optional[dict] = None) -> Optional[Plan]:
         target = self.resolve_target(goal)
         if target is None:
             return None
 
         # 复核：明知有教训，仍故意走一次那条路 —— 看环境是不是已经恢复。
+        # 复核**不吃软降权**，否则"被软降权的那条路"永远轮不到被复核。
         if probe:
             r = self.avoided_route(lessons)
             if r is not None:
@@ -103,7 +113,7 @@ class Planner:
                             proposals=self._build(r, target, view, caps),
                             is_probe=True)
 
-        route = self.choose_route(lessons)
+        route = self.choose_route(lessons, soft_penalty=soft_penalty)
         if route is None:
             return None
         proposals = self._build(route, target, view, caps)
@@ -111,10 +121,11 @@ class Planner:
 
     def replan(self, plan: Plan, view: WorldView, lessons: Sequence[Lesson],
                caps: EmbodimentCapabilities,
-               reason: Optional[str] = None) -> Optional[Plan]:
+               reason: Optional[str] = None,
+               soft_penalty: Optional[dict] = None) -> Optional[Plan]:
         """换一条路线重来 —— **从当前位置出发**，不是从头再来。"""
         exclude = (plan.route,)
-        route = self.choose_route(lessons, exclude=exclude)
+        route = self.choose_route(lessons, exclude=exclude, soft_penalty=soft_penalty)
         if route is None:
             return None
         proposals = self._build(route, plan.target, view, caps)

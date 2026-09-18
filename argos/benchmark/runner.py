@@ -14,9 +14,9 @@ from typing import Dict, List, Optional, Sequence
 
 from argos.agent.brain import AgentBrain
 from argos.agent.interfaces import FailReason
-from argos.agent.memory_agent import LessonStore
+from argos.agent.memory_agent import AgentMemory
 from argos.agent.planner import Planner
-from argos.benchmark.configs import CONFIGS, AgentConfig, make_agent_parts
+from argos.benchmark.configs import CONFIGS, AgentConfig, make_memory, make_reflector
 from argos.benchmark.scenarios import Scenario, build_scenarios
 from argos.sim.failure_injector import FailureInjector
 from argos.sim.latency import get_profile
@@ -90,16 +90,19 @@ def _mean(xs: Sequence[float]) -> float:
 
 def run_scenario(scenario: Scenario, cfg: AgentConfig, seed: int) -> ScenarioResult:
     """在给定场景+seed 下，用某配置连续跑 `scenario.episodes` 次（记忆共享）。"""
-    persistent = LessonStore()
+    persistent = AgentMemory()
     out = ScenarioResult(scenario=scenario.name, kind=scenario.kind,
                          config=cfg.name, seed=seed)
 
-    # ⚠️ `(store, reflector)` 必须**在 episode 循环外只建一次**：
-    #    Reflector 的失败计数就是"够不够证据"的账本，每 episode 重建会把账清零，
-    #    于是 min_hits=2 的配置永远凑不满 → 会得出"反思毫无作用"的**假负结论**（踩过）。
-    planner_store, reflector = make_agent_parts(cfg, persistent)
+    # ⚠️ 两件事必须分开：
+    #    * `reflector` 在循环**外**建一次 —— 它的失败计数是"够不够证据"的账本，
+    #      每 episode 重建会把账清零，min_hits=2 永远凑不满 → 会得出"反思毫无作用"的假负结论（踩过）；
+    #    * `memory` 在循环**内**每次取 —— 记忆要不要跨 episode 由配置决定，
+    #      顺手共享会让零记忆臂也"学会"（踩过）。
+    reflector = make_reflector(cfg, persistent)
 
     for i in range(scenario.episodes):
+        memory = make_memory(cfg, persistent)
         world = scenario.world()
         injector = FailureInjector(rng=random.Random(seed * 1000 + i))
         if i in scenario.transient_episodes:
@@ -110,8 +113,9 @@ def run_scenario(scenario: Scenario, cfg: AgentConfig, seed: int) -> ScenarioRes
         backend = SimulatorBackend(world=world, entity=entity, injector=injector,
                                    latency=latency, seed=seed)
         planner = Planner(world)
-        brain = AgentBrain(backend, planner, reflector, planner_store, max_retry=2,
-                           lesson_threshold=cfg.min_confidence)
+        brain = AgentBrain(backend, planner, reflector, max_retry=2,
+                           max_steps=scenario.max_steps,
+                           lesson_threshold=cfg.min_confidence, memory=memory)
 
         r = brain.run(scenario.goal)
         out.episodes.append(EpisodeResult(

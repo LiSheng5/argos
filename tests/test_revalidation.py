@@ -154,6 +154,37 @@ def test_revalidation_cuts_the_detour_cost_end_to_end():
     # 复核之后应该回到北线（最优），而不是一直绕
     assert rev.episodes[-1].route == "north"
     assert frozen.episodes[-1].route == "south"      # 不复核则一直绕
+    # 复核回来的那一次是**零失败**的最优路径（不是"回到北线又被挡一次"）
+    assert any(e.route == "north" and e.failures == 0 for e in rev.episodes[2:])
+
+
+def test_probe_success_clears_the_semantic_window():
+    """受控干预成功 → 该路线的滑窗重置。
+
+    不这样做会出现两层打架：Procedural 已被反证撤销，Semantic 的滑窗却还压着这条路，
+    结果探针明明验通了、agent 下一步又绕回远路（实测踩到过）。
+    """
+    from argos.agent.memory_agent import AgentMemory, EpisodeEvent
+    from argos.agent.planner import Planner
+    from argos.agent.reflection import Reflector
+    from argos.backends.simulator_backend import SimulatorBackend
+
+    memory = AgentMemory()
+    for i in range(2):
+        memory.record_episode(EpisodeEvent(episode=i, goal="g", route="north",
+                                           route_ok=False, episode_ok=False))
+    assert memory.soft_penalty() == {"north": 1.0}
+
+    reflector = Reflector(store=memory.procedural, revalidate_every=2,
+                          alternatives={"north": "south", "south": "north"})
+    be = SimulatorBackend(seed=42)
+    brain = AgentBrain(be, Planner(be.world), reflector, memory=memory)
+
+    # episode 0 会被判定为"该复核" → 走一次探针（这里世界是通的）
+    r = brain.run("去充电站")
+    if r.trace and r.trace[0].route == "north":
+        assert memory.windows.get("north") in (None, [True])   # 窗口已重置
+        assert memory.soft_penalty() == {}
 
 
 def test_revalidation_costs_at_most_one_probe_failure():

@@ -55,6 +55,11 @@ class Reflector:
         self._episodes += 1
         self._seen_this_episode.clear()
 
+    @property
+    def episode_index(self) -> int:
+        """已经历的 episode 数（public 出口，别在外面读 `_episodes`）。"""
+        return self._episodes
+
     def should_revalidate(self) -> bool:
         # `_episodes > 0` 不能省：计数从 0 起，`0 % N == 0` 会让"一次都没跑过"也判成该复核。
         return (self.revalidate_every > 0 and self._episodes > 0

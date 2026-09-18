@@ -53,6 +53,9 @@ class Scenario:
     transient_where: str = "north_corridor"
     start_battery: float = 100.0
     episodes: int = 3
+    #: 单次运行的**动作预算**。预算紧时才区分得出"学过 vs 没学过"：
+    #: 预算充裕时，现场换路总能把失败救回来（这正是早期 benchmark 区分不出成功率的原因）。
+    max_steps: int = 40
 
     def world(self) -> MiniWorld:
         base = build_default_world()
@@ -120,6 +123,24 @@ def build_scenarios() -> Tuple[Scenario, ...]:
             latency=lat,
             transient_episodes=(0, 1),
             episodes=5,
+        ))
+
+    # --- B3. 预算是紧的：现场换路救不回来，只有"学过"的才活得下来（= 2）---
+    #     北线永久被挡；南线畅通但**更长**；动作预算只够走一趟南线。
+    #     没学过的 agent 每次都先撞北线 → 预算耗尽 → 失败；
+    #     学过的（避开北线 / 或语义软降权）直接走南线 → 完成。
+    #     ← 这一族是专门用来治「成功率区分不出各组配置」的。
+    for lat in (None, "normal"):
+        out.append(Scenario(
+            name=f"learn_to_survive_{lat or 'none'}",
+            goal="去充电站",
+            description="北线永久被挡、南线更长，而单次动作预算只够走一趟 —— 现场换路救不回来",
+            kind="unrecoverable",
+            routes=_routes("north", "south"),
+            obstacles=(Rect("north_block", 5.0, 2.0, 2.0, 1.5),),
+            latency=lat,
+            episodes=4,
+            max_steps=6,
         ))
 
     # --- C. 无障碍（对照组 = 2）---
