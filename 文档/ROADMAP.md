@@ -108,9 +108,28 @@ Wave 2 得到的两条新结论（都进了 `文档/BENCHMARK.md` §4 自动推�
   所以它只能替代"固定周期"，**替代不了主动试探**。要做就该做在"当前路线的行为变了"这个信号上，
   和 `revalidate_every` 并存而不是替换（这是它的正确形态，也才值得做）。
 
-### Wave 4 · 文档收口（Phase 9 + 10）
-`文档/ARCHITECTURE.md`、`SIMULATION.md`、`WORLD_MODEL.md`、`SAFETY_MODEL.md`、
-`FUTURE_ROBOT_BACKEND.md` + `argos/backends/go2/` 规范（**只写规范，不写真机代码**）。
+### Wave 4 · 文档收口（Phase 9 + 10）—— ✅ 已完成（2026-09-18）
+
+指令 §27 点名的八篇文档 **2/8 → 8/8**：
+
+| 文档 | 内容 | 边界（不重抄谁） |
+|---|---|---|
+| `ARCHITECTURE.md` | 新 runtime 分层 / 依赖方向 / 三条铁律 / 扩展点 | 不重抄旧 `架构.md` 的模块清单 |
+| `SIMULATION.md` | 模拟了什么 / **没模拟什么** / 延迟剖面 / 注入 / 确定性 | — |
+| `WORLD_MODEL.md` | WorldState 语义 / 几何约定 / 怎么扩世界 | 字段名以代码为准 |
+| `REFLECTION_LOOP.md` | 闭环 / 三层记忆 / 撤销与复核 | **逐文件用例数只看 `小结` §1** |
+| `SAFETY_MODEL.md` | 五道关 / fail-closed 清单 / 闸拒绝≠世界经验 | 旧闸设计仍看 `架构.md` §7 |
+| `BENCHMARK.md` | 数据表 + 自动推导结论 + 限制（**生成物**） | 勿手改，用 `benchmark all` 重生成 |
+| `FUTURE_ROBOT_BACKEND.md` | 真机 backend 规范 + 红线 | 只有规范，**无实现** |
+| `argos/backends/go2/README.md` | go2 目录规范 + DoD | 同上 |
+
+**纪律**：新文档只描述**新 runtime**；`文档/架构.md` 仍是旧运行时的单一信息源。
+两套清单各写一份必然漂移 —— 这是这个项目的历史旧账，不再重犯。
+
+**明确仍未做**（保持原样，不算"欠"）：
+- 真机 backend（无硬件，且**不伪造**）；
+- `Evaluator` 独立成模块（判断见 Wave 3：当前世界无可观测差异，推迟）；
+- 变点检测（要改形态，见 Wave 3）。
 
 ---
 
