@@ -1,8 +1,9 @@
 """Benchmark CLI（Phase 7/8）。
 
     python -m argos.benchmark list
-    python -m argos.benchmark run  --scenario permanent_block_x5.0_northfirst --seed 42
-    python -m argos.benchmark all  --out 文档/BENCHMARK.md
+    python -m argos.benchmark run   --scenario permanent_block_x5.0_northfirst --seed 42
+    python -m argos.benchmark all   --out 文档/BENCHMARK.md
+    python -m argos.benchmark sweep --out 文档/SWEEP.md      # 阈值/窗口/复核周期扫描
 
 全部在仿真里跑，不碰任何硬件。同 seed 结果可复现。
 """
@@ -47,6 +48,29 @@ def _cmd_all(args) -> int:
     return 0
 
 
+def _cmd_sweep(args) -> int:
+    from argos.benchmark.report import render_markdown  # noqa: F401  (保持导入面一致)
+    from argos.benchmark.scenarios import build_scenarios
+    from argos.benchmark.sweep import SWEEPABLE, render_markdown as render_sweep, run_sweep
+
+    seeds = tuple(int(x) for x in args.seeds.split(","))
+    params = [p.strip() for p in args.params.split(",")] if args.params else None
+    for p in (params or []):
+        if p not in SWEEPABLE:
+            print(f"不可扫的参数：{p}；可扫的是 {sorted(SWEEPABLE)}", file=sys.stderr)
+            return 2
+
+    rows = run_sweep(params=params, seeds=seeds)
+    text = render_sweep(rows, seeds=seeds, n_scenarios=len(build_scenarios()))
+    if args.out:
+        out = Path(args.out)
+        out.write_text(text, encoding="utf-8")
+        print(f"已写出 {out}（扫了 {len(rows)} 个参数，seed={list(seeds)}）")
+    else:
+        print(text)
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="argos.benchmark",
                                 description="ArgOS Reflection Benchmark（纯仿真）")
@@ -65,6 +89,12 @@ def main(argv=None) -> int:
     pa.add_argument("--out", default="")
     pa.add_argument("--seeds", default=",".join(str(s) for s in DEFAULT_SEEDS))
     pa.set_defaults(func=_cmd_all)
+
+    ps = sub.add_parser("sweep", help="单参数扫描（阈值/窗口/复核周期）")
+    ps.add_argument("--out", default="")
+    ps.add_argument("--params", default="", help="逗号分隔；缺省扫全部")
+    ps.add_argument("--seeds", default=",".join(str(s) for s in DEFAULT_SEEDS))
+    ps.set_defaults(func=_cmd_sweep)
 
     args = p.parse_args(argv)
     return args.func(args)

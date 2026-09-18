@@ -15,7 +15,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
-from argos.agent.memory_agent import AgentMemory, LessonStore
+from argos.agent.memory_agent import (
+    DEFAULT_MIN_FAILURES,
+    DEFAULT_MIN_OBSERVATIONS,
+    DEFAULT_SOFT_THRESHOLD,
+    DEFAULT_WINDOW,
+    AgentMemory,
+    LessonStore,
+)
 from argos.agent.reflection import Reflector
 
 #: 路线之间的替代关系（Lesson 里 prefer 的来源）
@@ -35,6 +42,12 @@ class AgentConfig:
     #: 只用 **Semantic**（滑窗失败率 → 软降权），不消费 Procedural 硬策略。
     #: 用来回答"软降权能不能替代硬避开"。
     semantic_only: bool = False
+
+    # ---- 记忆层的旋钮（集中放在这里，扫参才能只改一处）----
+    window: int = DEFAULT_WINDOW                     # Semantic 看最近几次尝试
+    min_observations: int = DEFAULT_MIN_OBSERVATIONS  # 软降权：最少观测数
+    min_failures: int = DEFAULT_MIN_FAILURES          # 软降权：最少失败次数
+    soft_threshold: float = DEFAULT_SOFT_THRESHOLD    # 软降权：失败率阈值
 
 
 CONFIGS: Tuple[AgentConfig, ...] = (
@@ -97,10 +110,10 @@ def make_memory(cfg: AgentConfig, persistent: AgentMemory) -> AgentMemory:
     windows = persistent.windows if use_semantic else {}
 
     return AgentMemory(procedural=procedural, windows=windows,
-                       window=persistent.window,
-                       min_observations=persistent.min_observations,
-                       min_failures=persistent.min_failures,
-                       soft_threshold=persistent.soft_threshold)
+                       window=cfg.window,
+                       min_observations=cfg.min_observations,
+                       min_failures=cfg.min_failures,
+                       soft_threshold=cfg.soft_threshold)
 
 
 def make_agent_parts(cfg: AgentConfig, persistent: AgentMemory):
