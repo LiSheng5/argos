@@ -171,6 +171,11 @@ python -m pytest tests -q -p no:cacheprovider
 | **后续路线（还没做完的，逐条列清）** | `文档/ROADMAP.md` |
 | **反思闭环（失败→教训→换路线，对着代码写）** | `文档/REFLECTION_LOOP.md` |
 | **参数扫描（阈值/窗口/复核周期敏感度）** | `文档/SWEEP.md` |
+| **新 runtime 的结构（分层 / 依赖方向 / 扩展点）** | `文档/ARCHITECTURE.md` |
+| **仿真到底模拟了什么、没模拟什么** | `文档/SIMULATION.md` |
+| **世界模型与几何约定** | `文档/WORLD_MODEL.md` |
+| **安全模型（五道关 + fail-closed 清单）** | `文档/SAFETY_MODEL.md` |
+| **未来接真机的 backend 规范（只有规范，无实现）** | `文档/FUTURE_ROBOT_BACKEND.md` |
 | 可行性调研 | `文档/ai搜索后相关项目后做的可行性调研.md` |
 | 上狗前必读 | `文档/真机安全清单.md` |
 | 开发小结与实测数据（含逐文件用例数） | `文档/小结_20260829.md` |
