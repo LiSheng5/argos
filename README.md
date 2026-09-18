@@ -161,6 +161,7 @@ python -m pytest tests -q -p no:cacheprovider
 | **SIM-first 转向审计（缺口清单）** | `文档/SIM_FIRST_AUDIT.md` |
 | **Reflection Benchmark（四组配置实测对比）** | `文档/BENCHMARK.md` |
 | **端到端 Demo 逐步 trace** | `文档/demo_trace.md` |
+| **经验学习相关方案调研（别人怎么解 Reflection/Memory 的病）** | `文档/经验学习_相关方案调研.md` |
 | 可行性调研 | `文档/ai搜索后相关项目后做的可行性调研.md` |
 | 上狗前必读 | `文档/真机安全清单.md` |
 | 开发小结与实测数据（含逐文件用例数） | `文档/小结_20260829.md` |
