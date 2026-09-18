@@ -40,6 +40,9 @@ _REQUIRED: Dict[ActionKind, Tuple[str, ...]] = {
 # 数值型字段（必须是有限实数）
 _NUMERIC = ("x", "y", "yaw", "speed", "duration", "timeout")
 
+#: 需要"可信定位/电量"才允许执行的动作（缺数据时这些一律拒绝；STOP/WAIT/INSPECT 不受限）
+_MOTION_KINDS = frozenset({ActionKind.MOVE, ActionKind.TURN})
+
 DEFAULT_BOUNDARIES = {"x_min": -20.0, "x_max": 20.0, "y_min": -20.0, "y_max": 20.0}
 
 
@@ -117,6 +120,16 @@ class ActionGate:
         for key in ("duration", "timeout"):
             if key in params and float(params[key]) > self.max_duration:
                 return False, FailReason.SAFETY_REJECTED, f"{key} {float(params[key])} 超过上限 {self.max_duration}"
+
+        # 7.5) **缺数据 fail-closed**：拿不到定位/电量就不许移动。
+        #      宁可不动，也不要基于"猜的坐标"或"猜的电量"走出去。
+        #      STOP / WAIT 这类安全动作永远放行（不能把自己也锁死）。
+        if action.kind in _MOTION_KINDS:
+            missing = tuple(getattr(w, "missing", ()) or ())
+            lost = [n for n in ("pose", "battery") if n in missing]
+            if lost:
+                return (False, FailReason.SAFETY_REJECTED,
+                        f"传感器缺数据（{'/'.join(lost)}），拒绝移动（fail-closed）")
 
         # 8) 电量门控 —— 低电量是**世界的真实状态**，所以当可学习失败处理（不是闸的错）
         if action.kind != ActionKind.STOP and w.battery <= self.battery_min:

@@ -33,6 +33,8 @@ class WorldView:
     tasks: Tuple[str, ...] = ()
     sim_time: float = 0.0
     version: int = 0
+    #: 本轮没读到的传感器名（缺数据时 Planner 也看得到，别让它以为一切正常）
+    missing: Tuple[str, ...] = ()
 
     def location(self, name: str):
         """按名字取地点；不存在返回 None（不抛、不瞎猜）。"""
@@ -55,6 +57,7 @@ def view(state: WorldState) -> WorldView:
         tasks=tuple(state.tasks),
         sim_time=state.sim_time,
         version=state.version,
+        missing=tuple(state.missing),
     )
 
 
@@ -63,15 +66,29 @@ def from_observation(obs: Observation) -> WorldState:
     return WorldState(
         robot=obs.robot_pose,
         battery=obs.battery,
-        obstacles=dict(zip(_names(obs.obstacles), obs.obstacles)),
-        objects=dict(zip(_names(obs.objects), obs.objects)),
+        obstacles=as_dict(obs.obstacles),
+        objects=as_dict(obs.objects),
         locations=dict(obs.locations),
-        people=dict(zip(_names(obs.people), obs.people)),
+        people=as_dict(obs.people),
         events=list(obs.events),
         tasks=list(obs.tasks),
         sim_time=obs.sim_time,
         version=obs.version,
+        missing=tuple(obs.missing),
     )
+
+
+def as_dict(items) -> Dict[str, Any]:
+    """把一批对象 / (名字, 值) 对转成 WorldState 用的字典。
+
+    **所有写入口子都必须走这里** —— 踩过的坑：感知层把传感器返回的 tuple 直接写进
+    `state.obstacles`，而 `view()` 期待的是 dict（要调 `.items()`），一读就炸。
+    转换只放在一处，就不会再出现"某种数据源写进去的形状不对"。
+    """
+    items = tuple(items or ())
+    if items and isinstance(items[0], tuple) and len(items[0]) == 2:
+        return dict(items)
+    return dict(zip(_names(items), items))
 
 
 def _names(items) -> List[str]:

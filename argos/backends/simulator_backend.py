@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import dataclasses
 import random
 from typing import Optional
 
@@ -27,10 +28,11 @@ from argos.agent.interfaces import (
 )
 from argos.agent.watchdog import AgentWatchdog, TRIGGER_TAG
 from argos.sim.failure_injector import FailureInjector
+from argos.sensors.base import SensorReading, SensorSuite
 from argos.sim.latency import LatencyProfile
 from argos.sim.mini_entity import MiniEntity
 from argos.world.mini_world import MiniWorld, build_default_world
-from argos.world.state import bump, view
+from argos.world.state import bump, from_observation, view
 
 __all__ = ["SimulatorBackend", "build_simulator"]
 
@@ -48,6 +50,7 @@ class SimulatorBackend:
         start_at: Optional[str] = "room_a",
         latency: Optional[LatencyProfile] = None,
         watchdog: Optional[AgentWatchdog] = None,
+        sensors: Optional[SensorSuite] = None,
     ) -> None:
         self.world = world or build_default_world()
         self.rng = random.Random(seed)
@@ -68,6 +71,9 @@ class SimulatorBackend:
         self.injector = injector or FailureInjector(rng=self.rng)
         self.latency = latency
         self.watchdog = watchdog
+        #: 感知层（可选）。不配 = 上帝视角直读实体，行为与从前逐字一致。
+        self.sensors = sensors
+        self.last_readings: List[SensorReading] = []
         self.steps = 0
         self.state = WorldState(
             robot=self.entity.pose,
@@ -86,10 +92,28 @@ class SimulatorBackend:
     def capabilities(self) -> EmbodimentCapabilities:
         return self.caps
 
+    def _sense(self):
+        """读一遍传感器：返回 `(字段覆盖, 缺失名单, 逐项读数)`。
+
+        ⚠️ **不写 WorldState** —— 感知是**投影**，不是写入。
+        早先写成"感知结果写进 state"是错的：要么被 `_sync` 的真值冲掉、
+        要么让 state 变成半真半假的混合体（实测踩到，改成现在这样）。
+        """
+        if self.sensors is None:
+            return {}, (), []
+        overrides, missing, readings = self.sensors.sense(self.entity, self.world)
+        self.last_readings = readings
+        return overrides, missing, readings
+
     def observe(self) -> Observation:
-        """只读投影：把当前 WorldState 变成 Brain 能看的 Observation。"""
+        """世界状态 → **经由传感器** → Brain 能看的 Observation。
+
+        没配传感器 = 上帝视角直读（与从前逐字一致）；
+        配了传感器 = 只能看到传感器读到的（可能有噪声、量化、范围限制、甚至读不到）。
+        """
         v = view(self.state)
-        return Observation(
+        overrides, missing, _ = self._sense()
+        obs = Observation(
             robot_pose=v.robot,
             battery=v.battery,
             obstacles=tuple(x[1] for x in v.obstacles),
@@ -100,7 +124,12 @@ class SimulatorBackend:
             tasks=v.tasks,
             sim_time=v.sim_time,
             version=v.version,
+            missing=v.missing if self.sensors is None else missing,
         )
+        if overrides:
+            obs = dataclasses.replace(obs, **{
+                k: val for k, val in overrides.items() if hasattr(obs, k)})
+        return obs
 
     def apply(self, action: Action) -> ActionResult:
         """唯一动作出口：**看门狗 → 闸门 → 失败注入 → 延迟 → 执行器 → 写世界**。"""
@@ -108,7 +137,10 @@ class SimulatorBackend:
         before = self.entity.pose
         t0 = self.state.sim_time
 
-        # 0) 看门狗：跳闸后除 STOP 外一律拒绝（fail-closed，须显式 reset）
+        # 0) 先读一遍传感器：闸门要据此判断"数据可不可信"（缺数据 fail-closed）
+        self._sense()
+
+        # 1) 看门狗：跳闸后除 STOP 外一律拒绝（fail-closed，须显式 reset）
         #    心跳语义 = "距离上一次**成功完成**的动作过了多久"，所以这里只 check 不 beat；
         #    beat 放在动作完成之后（见第 6 步）。
         if self.watchdog is not None:
@@ -127,7 +159,8 @@ class SimulatorBackend:
                 self.watchdog.begin_action(t0)
 
         # 1) 闸（不可绕过）
-        ok, reason, detail = self.gate.check(action, self.state)
+        # 闸门依据的是**感知**（不是真值）：拿不到数据就该拒绝，而不是凭真值放行
+        ok, reason, detail = self.gate.check(action, from_observation(self.observe()))
         if not ok:
             return self._record(ActionResult(
                 ok=False, reason=reason, detail=detail,

@@ -149,6 +149,9 @@ class Observation:
     tasks: Tuple[str, ...] = ()
     sim_time: float = 0.0
     version: int = 0
+    #: 这一轮**没读到的传感器名**（失灵 / 超范围）。字段里仍带最后可用值，
+    #: 但**消费者必须先看 `missing`** —— 安全闸对缺数据是 fail-closed 的。
+    missing: Tuple[str, ...] = ()
 
 
 class EmbodimentBackend(Protocol):
@@ -179,6 +182,8 @@ class WorldState:
     tasks: List[str] = field(default_factory=list)
     sim_time: float = 0.0
     version: int = 0
+    #: 本轮没读到的传感器名（见 `Observation.missing`）。缺 pose / battery 时闸门拒绝移动。
+    missing: Tuple[str, ...] = ()
 
     def touch(self) -> None:
         """任何写入之后调用：版本号 +1。"""

@@ -24,7 +24,9 @@ from argos.agent.brain import AgentBrain
 from argos.agent.memory_agent import LessonStore
 from argos.agent.planner import Planner
 from argos.agent.reflection import Reflector
+from argos.world.mini_world import build_default_world
 from argos.backends.simulator_backend import SimulatorBackend
+from argos.input import INPUTS, build_input
 
 __all__ = ["BACKENDS", "register_backend", "build_backend", "run", "main"]
 
@@ -75,6 +77,17 @@ def _route_topology(be):
             "该 backend 没有提供路线拓扑：Planner 目前仍绑在 MiniWorld 上。"
             "这是已知限制（见 文档/ROADMAP.md Wave 3），不在这里伪造。")
     return world
+
+
+def resolve_goal(utterance: str, input_name: str = "text", planner=None) -> Optional[str]:
+    """一句话 → goal。认不出返回 None（**不猜**）。
+
+    `speech` 需要 resolver 校验地点名，所以要么给 planner，要么它会明确报错。
+    """
+    if planner is None:
+        planner = Planner(build_default_world())
+    be = build_backend("simulator", seed=0)
+    return build_input(input_name, planner.resolve_target).goal_from(utterance)
 
 
 def run(goal: str = DEFAULT_GOAL, backend: str = "simulator", seed: int = 42,
@@ -140,6 +153,10 @@ def main(argv=None) -> int:
                    help="用哪个 embodiment 跑；未知名字会明确报错")
     p.add_argument("--list-backends", action="store_true", help="列出可用 backend")
     p.add_argument("--goal", default=DEFAULT_GOAL)
+    p.add_argument("--input", default="text", choices=sorted(INPUTS),
+                   help="输入后端：text=直通 / speech=口语规则抽取（不是语音识别）")
+    p.add_argument("--say", default="",
+                   help="用一句话指定目标（配合 --input）；听不懂会明确报错，不会瞎猜")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--episodes", type=int, default=3)
     p.add_argument("--revalidate-every", type=int, default=0,
@@ -155,13 +172,22 @@ def main(argv=None) -> int:
         print("（未列出、但指令提过的 `go2` 等：尚未实现，本项目当前没有真机硬件）")
         return 0
 
+    goal = args.goal
+    if args.say:
+        goal = resolve_goal(args.say, args.input)
+        if goal is None:
+            print(f"没听懂：{args.say!r}（--input {args.input}）。"
+                  "不会猜一个目标去执行 —— 换个说法或直接用 --goal。", file=sys.stderr)
+            return 2
+
     verbose = not args.quiet
     if verbose:
-        print(f"backend={args.backend}  goal={args.goal!r}  seed={args.seed}  "
-              f"episodes={args.episodes}")
+        print(f"backend={args.backend}  goal={goal!r}  seed={args.seed}  "
+              f"episodes={args.episodes}"
+              + (f"  input={args.input}  say={args.say!r}" if args.say else ""))
 
     try:
-        eps, lessons = run(goal=args.goal, backend=args.backend, seed=args.seed,
+        eps, lessons = run(goal=goal, backend=args.backend, seed=args.seed,
                            episodes=args.episodes,
                            revalidate_every=args.revalidate_every,
                            trace_path=args.trace or None, verbose=verbose)
