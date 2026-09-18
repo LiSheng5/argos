@@ -61,9 +61,18 @@ class Reflector:
                 and self._episodes % self.revalidate_every == 0)
 
     def record_success(self, trigger: str, detail: str = "") -> Optional[Lesson]:
-        """走通了某条**曾被避开**的路线 → 反证 → 削弱对应教训。"""
+        """走通了某条**曾被避开**的路线 → 反证 → 削弱对应教训。
+
+        同时**清空该路线的失败证据计数**：反证成立之后，要把教训重新激活
+        必须重新积累 `min_hits` 次独立失败 —— 否则"刚被推翻的教训被一次偶发立刻复活"，
+        等于没治。
+        """
         route = trigger.split(":", 1)[-1]
-        return self.store.weaken(route)
+        out = self.store.weaken(route, episode=self._episodes)
+        for key in [k for k in self._counts if k[0] == trigger]:
+            self._counts.pop(key, None)
+            self._evidence.pop(key, None)
+        return out
 
     def record_failure(self, *, trigger: str, reason: FailReason,
                        detail: str = "") -> int:
@@ -111,7 +120,7 @@ class Reflector:
                 hits=hits,
                 scope=f"route:{route}",
             )
-            out.append(self.store.add(lesson))
+            out.append(self.store.add(lesson, episode=self._episodes))
         return out
 
     def counts(self) -> Dict[Tuple[str, str], int]:

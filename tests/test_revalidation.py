@@ -79,16 +79,53 @@ def test_probe_plan_targets_the_avoided_route():
 
 # ---------- 3. 反证削弱 ----------
 
-def test_weaken_lowers_confidence_then_removes():
+def test_weaken_lowers_confidence_then_invalidates_without_deleting():
+    """反证：先降级，归零后**标记失效**——而不是删掉（要留审计轨迹）。"""
     store = LessonStore()
     store.add(Lesson(id="l", trigger="route:north", avoid="north", prefer="south",
                      evidence="e", confidence=0.67, hits=2))
-    l1 = store.weaken("north")
-    assert l1 is not None and l1.hits == 1
+    l1 = store.weaken("north", episode=3)
+    assert l1.hits == 1 and l1.status == "active"
     assert l1.confidence < 0.67
     assert "反证" in l1.evidence
-    assert store.weaken("north") is None            # hits 归零 → 撤销
-    assert store.all() == []
+
+    l2 = store.weaken("north", episode=4)
+    assert l2 is not None
+    assert l2.status == "invalidated"          # 失效，但**还在库里**
+    assert store.all() != []
+    assert store.active() == []                # 不再参与规划
+    assert [l.id for l in store.invalidated()] == ["l"]
+    assert "counter_evidence@ep4" in l2.history
+
+    # 已经失效的条目不会被反复削弱
+    assert store.weaken("north") is None
+
+
+def test_invalidated_lesson_can_be_reinstated_with_fresh_evidence():
+    """环境又变回去了 → 失效的教训可以复活（失效 ≠ 永久作废）。"""
+    store = LessonStore()
+    store.add(Lesson(id="l", trigger="route:north", avoid="north", prefer="south",
+                     evidence="e", confidence=0.67, hits=2), episode=1)
+    store.weaken("north", episode=2)
+    store.weaken("north", episode=3)
+    assert store.get("l").status == "invalidated"
+
+    again = Lesson(id="l", trigger="route:north", avoid="north", prefer="south",
+                   evidence="e2", confidence=0.67, hits=2)
+    back = store.add(again, episode=9)
+    assert back.status == "active"
+    assert "reinstate@ep9" in back.history
+    assert back.created_episode == 1 and back.updated_episode == 9
+
+
+def test_history_records_support_events():
+    store = LessonStore()
+    store.add(Lesson(id="l", trigger="route:north", avoid="north", prefer="south",
+                     evidence="e", confidence=0.5, hits=1), episode=1)
+    l = store.add(Lesson(id="l", trigger="route:north", avoid="north", prefer="south",
+                         evidence="e", confidence=0.67, hits=2), episode=2)
+    assert l.history == ("support@ep1", "support@ep2")
+    assert l.hits == 2
 
 
 def test_weaken_unknown_route_is_noop():

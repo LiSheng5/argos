@@ -23,50 +23,82 @@ DEFAULT_MIN_CONFIDENCE = 0.6
 class LessonStore:
     lessons: Dict[str, Lesson] = field(default_factory=dict)
 
-    def add(self, lesson: Lesson) -> Lesson:
-        """同一条经验重复出现 → hits 累加、confidence 提高（不重复建条目）。"""
+    def add(self, lesson: Lesson, episode: int = 0) -> Lesson:
+        """同一条经验重复出现 → hits 累加、confidence 提高（不重复建条目）。
+
+        若该条目此前已被反证失效，则**复活**它 —— 环境可能又变回去了，
+        「失效」不等于「永久作废」。
+        """
         old = self.lessons.get(lesson.id)
         if old is None:
-            self.lessons[lesson.id] = lesson
-            return lesson
+            self.lessons[lesson.id] = Lesson(
+                id=lesson.id, trigger=lesson.trigger, avoid=lesson.avoid,
+                prefer=lesson.prefer, evidence=lesson.evidence,
+                confidence=lesson.confidence, hits=lesson.hits, scope=lesson.scope,
+                status="active",
+                history=lesson.history or (f"support@ep{episode}",),
+                created_episode=episode, updated_episode=episode,
+            )
+            return self.lessons[lesson.id]
+
+        reinstate = old.status != "active"
         merged = Lesson(
             id=old.id, trigger=old.trigger, avoid=old.avoid, prefer=old.prefer,
             evidence=(old.evidence + " | " + lesson.evidence)[:400],
-            confidence=lesson.confidence, hits=old.hits + 1,
+            confidence=lesson.confidence, hits=old.hits + 1, scope=old.scope,
+            status="active",
+            history=old.history + ((f"reinstate@ep{episode}",) if reinstate
+                                   else (f"support@ep{episode}",)),
+            created_episode=old.created_episode, updated_episode=episode,
         )
         self.lessons[old.id] = merged
         return merged
 
     def active(self, min_confidence: float = DEFAULT_MIN_CONFIDENCE) -> List[Lesson]:
-        """参与规划的经验（按置信度过滤）。"""
-        return [l for l in self.lessons.values() if l.confidence >= min_confidence]
+        """参与规划的经验（**只算生效中的**，按置信度过滤）。"""
+        return [l for l in self.lessons.values()
+                if l.status == "active" and l.confidence >= min_confidence]
+
+    def invalidated(self) -> List[Lesson]:
+        """已被反证推翻的教训 —— **保留下来供审计**，不参与规划。"""
+        return [l for l in self.lessons.values() if l.status != "active"]
 
     def avoided(self, min_confidence: float = DEFAULT_MIN_CONFIDENCE) -> Tuple[str, ...]:
         """当前应该避开的东西（路线名 / 区域名）。"""
         return tuple(l.avoid for l in self.active(min_confidence))
 
-    def weaken(self, avoid: str) -> Optional[Lesson]:
+    def weaken(self, avoid: str, episode: int = 0) -> Optional[Lesson]:
         """**反证**：有人走通了这条被避开的路线 → 教训降一级。
 
         这是治"一次偶发被当成永久教训"的关键一步 —— 教训必须能被撤销，
         否则环境恢复了、agent 还在绕远路。
 
-        降级规则：`hits -= 1` 并重算置信度（`hits/(hits+1)`）；降到 0 就从库里删掉。
+        规则：`hits -= 1` 并重算置信度（`hits/(hits+1)`）；降到 0 → **标记失效**。
+        ⚠️ **不删除**：删掉就再也查不到"当初学到过什么、又是被什么推翻的"。
+        失效的条目留在库里（`invalidated()` 可查），若日后又积累到证据会**复活**。
         """
-        for k, l in list(self.lessons.items()):
-            if l.avoid != avoid:
+        for l in self.lessons.values():
+            if l.avoid != avoid or l.status != "active":
                 continue
             hits = l.hits - 1
+            history = l.history + (f"counter_evidence@ep{episode}",)
             if hits <= 0:
-                del self.lessons[k]
-                return None
-            out = Lesson(
-                id=l.id, trigger=l.trigger, avoid=l.avoid, prefer=l.prefer,
-                evidence=(l.evidence + f" | 反证：{avoid} 后来走通了")[:400],
-                confidence=min(0.95, hits / (hits + 1.0)),
-                hits=hits, scope=l.scope,
-            )
-            self.lessons[k] = out
+                out = Lesson(
+                    id=l.id, trigger=l.trigger, avoid=l.avoid, prefer=l.prefer,
+                    evidence=(l.evidence + f" | 反证：{avoid} 后来走通了")[:400],
+                    confidence=0.0, hits=0, scope=l.scope,
+                    status="invalidated", history=history,
+                    created_episode=l.created_episode, updated_episode=episode,
+                )
+            else:
+                out = Lesson(
+                    id=l.id, trigger=l.trigger, avoid=l.avoid, prefer=l.prefer,
+                    evidence=(l.evidence + f" | 反证：{avoid} 后来走通了")[:400],
+                    confidence=min(0.95, hits / (hits + 1.0)), hits=hits,
+                    scope=l.scope, status="active", history=history,
+                    created_episode=l.created_episode, updated_episode=episode,
+                )
+            self.lessons[l.id] = out
             return out
         return None
 

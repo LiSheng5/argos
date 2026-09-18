@@ -203,6 +203,18 @@ class Lesson:
     confidence: float = 0.0
     hits: int = 1
     scope: str = ""
+    #: `active` = 现在生效；`invalidated` = 已被反证推翻（**保留不删**，供审计与复盘）。
+    #: 参考 Zep/Graphiti 的做法：invalidate 而不 discard —— 删掉就再也查不到"当初学到过什么"。
+    status: str = "active"
+    #: 验证历史（形如 `support@ep1` / `counter_evidence@ep2` / `reinstate@ep5`），
+    #: 让"这条教训是怎么来的、又是怎么被推翻的"可追溯。
+    history: Tuple[str, ...] = ()
+    created_episode: int = 0
+    updated_episode: int = 0
+
+    @property
+    def active(self) -> bool:
+        return self.status == "active"
 
     def matches(self, candidate: str) -> bool:
         """候选路线/目标是否命中这条教训的 avoid。"""
