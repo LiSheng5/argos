@@ -37,8 +37,33 @@ class Reflector:
     alternatives: Dict[str, str] = field(default_factory=dict)
     min_hits: int = 2
     min_confidence: float = DEFAULT_MIN_CONFIDENCE
+    #: 每隔 N 个 episode 主动复核一次被避开的路线（0 = 不复核）。
+    #: 没有复核的教训会**永久化** —— 环境恢复了 agent 还在绕远路。
+    revalidate_every: int = 0
     _counts: Dict[Tuple[str, str], int] = field(default_factory=dict)
     _evidence: Dict[Tuple[str, str], List[str]] = field(default_factory=dict)
+    _episodes: int = 0
+    _seen_this_episode: Dict[str, bool] = field(default_factory=dict)
+
+    # ---- episode 边界（证据独立性的关键）----
+    def begin_episode(self) -> None:
+        """每个 episode 开始时调用：清掉"本回合已计过"的标记。
+
+        没有这一步，一次 episode 里连撞两次就会被当成 **2 条独立证据**，
+        `min_hits=2` 也就形同虚设 —— "两次独立尝试才学"这个意图会落空。
+        """
+        self._episodes += 1
+        self._seen_this_episode.clear()
+
+    def should_revalidate(self) -> bool:
+        # `_episodes > 0` 不能省：计数从 0 起，`0 % N == 0` 会让"一次都没跑过"也判成该复核。
+        return (self.revalidate_every > 0 and self._episodes > 0
+                and self._episodes % self.revalidate_every == 0)
+
+    def record_success(self, trigger: str, detail: str = "") -> Optional[Lesson]:
+        """走通了某条**曾被避开**的路线 → 反证 → 削弱对应教训。"""
+        route = trigger.split(":", 1)[-1]
+        return self.store.weaken(route)
 
     def record_failure(self, *, trigger: str, reason: FailReason,
                        detail: str = "") -> int:
@@ -51,6 +76,12 @@ class Reflector:
         if reason not in ROUTE_REASONS:
             # 记数是记数，但**不生成"避开这条路"的经验** —— 原因不在这里。
             return 0
+        # 同一 episode 内同类失败只算 **1 条独立证据**（去重）
+        dedup = f"{trigger}|{reason.value}"
+        if self._seen_this_episode.get(dedup):
+            return self._counts.get((trigger, reason.value), 0)
+        self._seen_this_episode[dedup] = True
+
         key = (trigger, reason.value)
         self._counts[key] = self._counts.get(key, 0) + 1
         self._evidence.setdefault(key, []).append(detail or reason.value)

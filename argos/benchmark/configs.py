@@ -31,6 +31,7 @@ class AgentConfig:
     min_hits: int
     min_confidence: float
     description: str
+    revalidate_every: int = 0    # 每隔几个 episode 复核一次被避开的路线（0 = 不复核）
 
 
 CONFIGS: Tuple[AgentConfig, ...] = (
@@ -46,6 +47,10 @@ CONFIGS: Tuple[AgentConfig, ...] = (
     AgentConfig("memory_reflection", "规划+记忆+反思", persist=True, consume=True,
                 min_hits=2, min_confidence=0.6,
                 description="完整闭环：够证据才形成教训，且教训真的被规划消费"),
+    AgentConfig("memory_reflection_revalidate", "规划+记忆+反思+复核", persist=True,
+                consume=True, min_hits=2, min_confidence=0.6, revalidate_every=2,
+                description="在上一臂基础上，每 2 个 episode 主动复核一次被避开的路线 —— "
+                            "治「环境已恢复、教训还在」的永久绕路"),
 )
 
 
@@ -69,5 +74,6 @@ def make_agent_parts(cfg: AgentConfig, persistent: LessonStore):
         alternatives=dict(ALTERNATIVES),
         min_hits=cfg.min_hits,
         min_confidence=cfg.min_confidence,
+        revalidate_every=cfg.revalidate_every,
     )
     return planner_store, reflector

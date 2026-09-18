@@ -37,10 +37,14 @@ def test_unknown_scenario_raises():
 
 # ---------- 配置 ----------
 
-def test_four_arms_including_a_negative_one():
+def test_arms_include_a_negative_one_and_a_revalidation_one():
+    """五臂 = 指令要的四组对比 + 本轮新增的「带复核」臂。"""
     names = [c.name for c in CONFIGS]
-    assert names == ["planner_only", "memory_only", "reflection_only", "memory_reflection"]
-    assert config_by_name("reflection_only").consume is False   # 故意留的负结果臂
+    assert names == ["planner_only", "memory_only", "reflection_only",
+                     "memory_reflection", "memory_reflection_revalidate"]
+    assert config_by_name("reflection_only").consume is False          # 故意留的负结果臂
+    assert config_by_name("memory_reflection").revalidate_every == 0   # 不复核（永久化）
+    assert config_by_name("memory_reflection_revalidate").revalidate_every == 2
 
 
 def test_reflection_only_writes_but_planner_cannot_read():
@@ -123,7 +127,7 @@ def test_report_has_all_sections():
     sc = build_scenarios()[:2]
     results = run_matrix(scenarios=sc, seeds=(42,))
     text = render_markdown(results, (42,))
-    for section in ("## 1. 四组配置对比", "## 2. 分场景", "## 3. 学习速度",
+    for section in ("## 1. 各组配置对比", "## 2. 分场景", "## 3. 学习速度",
                     "## 4. 结论（由数据自动推导）", "## 已知限制与负结果"):
         assert section in text
     assert "| 配置 | 任务成功率 | 平均重试 | 平均动作数 | 平均完成耗时(s) | 平均失败数 |" in text

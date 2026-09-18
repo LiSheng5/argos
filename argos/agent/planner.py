@@ -44,6 +44,8 @@ class Plan:
     goal: str
     target: str
     proposals: List[ActionProposal] = field(default_factory=list)
+    #: 这是不是一次"复核试探"（明知有教训仍故意走那条路，看它恢复了没）
+    is_probe: bool = False
 
 
 class Planner:
@@ -78,11 +80,29 @@ class Planner:
             return r
         return None
 
+    def avoided_route(self, lessons: Sequence[Lesson],
+                      exclude: Sequence[str] = ()) -> Optional[str]:
+        """取一条**当前被教训避开**的路线（用于复核试探）。"""
+        avoided = {l.avoid for l in lessons}
+        for r in self.world.route_names():
+            if r in avoided and r not in exclude:
+                return r
+        return None
+
     def plan(self, goal: str, view: WorldView, lessons: Sequence[Lesson],
-             caps: EmbodimentCapabilities) -> Optional[Plan]:
+             caps: EmbodimentCapabilities, probe: bool = False) -> Optional[Plan]:
         target = self.resolve_target(goal)
         if target is None:
             return None
+
+        # 复核：明知有教训，仍故意走一次那条路 —— 看环境是不是已经恢复。
+        if probe:
+            r = self.avoided_route(lessons)
+            if r is not None:
+                return Plan(route=r, goal=goal, target=target,
+                            proposals=self._build(r, target, view, caps),
+                            is_probe=True)
+
         route = self.choose_route(lessons)
         if route is None:
             return None

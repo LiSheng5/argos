@@ -88,20 +88,32 @@ class AgentBrain:
     # ---- 主循环 ----
     def run(self, goal: str) -> RunResult:
         caps = self.backend.capabilities()
+        # 证据独立性 + 复核节奏都挂在 reflector 上（它是唯一跨 episode 的账本之一）
+        self.reflector.begin_episode()
 
         if self.planner is None:
             return RunResult(ok=False, goal=goal, steps=0, failures=0, replans=0,
                              stop_reason="未配置 Planner")
 
+        trace: List[TraceStep] = []
+
+        def finish(ok: bool, stop_reason: str, plan=None,
+                   steps: int = 0, failures: int = 0, replans: int = 0) -> RunResult:
+            """统一出口：顺便处理"复核成功 → 反证 → 削弱教训"。"""
+            if plan is not None and plan.is_probe and ok and failures == 0:
+                # 试探的那条路线**一次都没失败** —— 说明它已经通了，撤销旧教训。
+                self.reflector.record_success(f"route:{plan.route}")
+            return RunResult(ok=ok, goal=goal, steps=steps, failures=failures,
+                             replans=replans, lessons=self.store.all(), trace=trace,
+                             final_pose=self._view().robot, stop_reason=stop_reason)
+
         v = self._view()
-        plan = self.planner.plan(goal, v, self.store.active(self.lesson_threshold), caps)
+        plan = self.planner.plan(goal, v, self.store.active(self.lesson_threshold), caps,
+                                 probe=self.reflector.should_revalidate())
         if plan is None:
-            return RunResult(ok=False, goal=goal, steps=0, failures=0, replans=0,
-                             final_pose=v.robot,
-                             stop_reason="目标无法理解，或无可用路线")
+            return finish(False, "目标无法理解，或无可用路线")
 
         queue = list(plan.proposals)
-        trace: List[TraceStep] = []
         steps = failures = replans = retries = 0
 
         while queue and steps < self.max_steps:
@@ -120,12 +132,8 @@ class AgentBrain:
 
             # 被闸拒 / 参数不合法 —— 不是世界的经验，不反思、不重试，直接停
             if not res.learnable:
-                return RunResult(
-                    ok=False, goal=goal, steps=steps, failures=failures, replans=replans,
-                    lessons=self.store.all(), trace=trace,
-                    final_pose=self._view().robot,
-                    stop_reason=f"被安全闸拒绝（{res.reason.value}）：{res.detail}",
-                )
+                return finish(False, f"被安全闸拒绝（{res.reason.value}）：{res.detail}",
+                              steps=steps, failures=failures, replans=replans)
 
             # 真实失败 → 记录 → 反思 → 换路线
             failures += 1
@@ -143,20 +151,12 @@ class AgentBrain:
                     replans += 1
                     continue
 
-            return RunResult(
-                ok=False, goal=goal, steps=steps, failures=failures, replans=replans,
-                lessons=self.store.all(), trace=trace,
-                final_pose=self._view().robot,
-                stop_reason=f"重试 {retries} 次仍失败：{res.reason.value}",
-            )
+            return finish(False, f"重试 {retries} 次仍失败：{res.reason.value}",
+                          steps=steps, failures=failures, replans=replans)
 
-        final = self._view()
         ok = not queue
-        return RunResult(
-            ok=ok, goal=goal, steps=steps, failures=failures, replans=replans,
-            lessons=self.store.all(), trace=trace, final_pose=final.robot,
-            stop_reason="完成" if ok else "步数预算耗尽",
-        )
+        return finish(ok, "完成" if ok else "步数预算耗尽", plan=plan,
+                      steps=steps, failures=failures, replans=replans)
 
     # ---- 内部 ----
     def _view(self):

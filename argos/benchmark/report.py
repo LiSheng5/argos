@@ -24,7 +24,12 @@ LIMITS = """
    这是本轮实测倒逼出来的修正：早期版本会把"低电量"学成"北线不能走"，属于错误因果。
 4. **阈值（min_hits=2 / confidence≥0.6）是拍的**，本轮只做了固定值对比，没有扫参。
    要证明"阈值选得好"，需要 Phase 7.1 的参数扫描 —— 现在还不能下这个结论。
-5. **`reflection_only` 臂是故意留的负结果臂**：若它与 `memory_reflection` 打平，
+5. **复核周期 `revalidate_every=2` 同样是拍的**，而且只在「连撞两次后恢复」这一个场景族里
+   验证过；换周期会不会更好、换别的失败模式还灵不灵，都没扫过。
+6. **反证削弱是粗糙规则**（`hits -= 1`）：试探成功一次就降一级，没有考虑
+   "偶尔一次成功不代表恢复"。更严谨的做法是把路线选择当作**带不确定性的决策**
+   （多臂老虎机：成功/失败更新后验，而不是二值 avoid）。
+7. **`reflection_only` 臂是故意留的负结果臂**：若它与 `memory_reflection` 打平，
    说明"反思"本身没带来价值。表里的数字是什么就是什么，不做挑选。
 """
 
@@ -45,7 +50,7 @@ def render_markdown(results: Sequence[ScenarioResult],
     lines.append("")
 
     # ---- 总表 ----
-    lines.append("## 1. 四组配置对比（跨全部场景与 seed 平均）")
+    lines.append("## 1. 各组配置对比（跨全部场景与 seed 平均）")
     lines.append("")
     lines.append("| 配置 | 任务成功率 | 平均重试 | 平均动作数 | 平均完成耗时(s) | 平均失败数 |")
     lines.append("|---|---|---|---|---|---|")
@@ -125,6 +130,29 @@ def _conclusions(table, results, order) -> str:
                 out.append(f"- ⚠️ 瞬时故障场景里 `memory_only`（{mo:.2f} 动作）**没有**比 "
                            f"`memory_reflection`（{mr:.2f}）更差 —— 本轮场景没能度量出"
                            "「不过度泛化」的价值，需要更贵的绕路设计。")
+
+    # (2b) 复核机制是否真的把"永久绕路"治好了
+    freeze = [r for r in results if r.scenario.startswith("two_strikes_then_clear")]
+    if freeze:
+        by_cfg2: Dict[str, List[ScenarioResult]] = {}
+        for r in freeze:
+            by_cfg2.setdefault(r.config, []).append(r)
+        if "memory_reflection" in by_cfg2 and "memory_reflection_revalidate" in by_cfg2:
+            nf = by_cfg2["memory_reflection"]
+            nr = by_cfg2["memory_reflection_revalidate"]
+            af = sum(x.avg_steps for x in nf) / len(nf)
+            ar = sum(x.avg_steps for x in nr) / len(nr)
+            ff = sum(x.avg_failures for x in nf) / len(nf)
+            fr = sum(x.avg_failures for x in nr) / len(nr)
+            if ar < af:
+                out.append(
+                    f"- ✅ **周期复核治好了「永久绕路」**：在「连撞两次后环境恢复」的场景里，"
+                    f"不复核的 `memory_reflection` 平均动作 **{af:.2f}**，每 2 个 episode 复核一次的"
+                    f" `memory_reflection_revalidate` 降到 **{ar:.2f}**（省 {af - ar:.2f} 个动作），"
+                    f"代价是平均失败数 {fr:.2f} vs {ff:.2f} —— **用一次试探买回一条路**。")
+            else:
+                out.append(f"- ⚠️ 复核臂（{ar:.2f} 动作）没有比不复核（{af:.2f}）更省 —— "
+                           "需要检查复核周期或反证削弱是否真的生效。")
 
     # (3) 成功率能否区分
     rates = {table[k]["success_rate"] for k in order}

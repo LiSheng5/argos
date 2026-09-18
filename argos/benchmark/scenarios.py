@@ -21,6 +21,13 @@ _LONG_SOUTH = (
     Pose(2.0, -2.0, 0.0), Pose(3.5, -3.0, 0.0), Pose(5.0, -3.0, 0.0),
     Pose(7.0, -3.0, 0.0), Pose(9.0, -2.5, 0.0), Pose(10.0, -2.0, 0.0),
 )
+#: 超长南线（8 个途经点）：把"永久绕远路"的代价放大到肉眼可见，
+#: 否则"过度泛化"这件事度量不出来（失败数一样，动作数只差一点）。
+_VERY_LONG_SOUTH = (
+    Pose(1.5, -2.0, 0.0), Pose(2.5, -3.5, 0.0), Pose(4.0, -4.0, 0.0),
+    Pose(5.5, -4.0, 0.0), Pose(7.0, -4.0, 0.0), Pose(8.5, -3.5, 0.0),
+    Pose(9.5, -2.5, 0.0), Pose(10.0, -2.0, 0.0),
+)
 _SHORT_NORTH = (
     Pose(2.0, 2.0, 0.0), Pose(5.0, 2.0, 0.0), Pose(9.0, 2.0, 0.0), Pose(10.0, -2.0, 0.0),
 )
@@ -38,7 +45,12 @@ class Scenario:
     routes: Optional[Tuple[Tuple[str, Tuple[Pose, ...]], ...]] = None
     obstacles: Optional[Tuple[Rect, ...]] = None
     latency: Optional[str] = None               # LatencyProfile 名字
-    transient_once: bool = False                # 是否只在第 0 个 episode 注入一次障碍失败
+    #: 在**哪些 episode** 里注入一次"瞬时障碍"（其余 episode 是通的）。
+    #: 空 = 不注入。用元组而非 bool，才能造出"连撞两次、然后恢复"这种关键场景。
+    transient_episodes: Tuple[int, ...] = ()
+    #: 瞬时故障绑在哪个**世界位置**上（见 runner 的 _WHERE 表）。
+    #: 必须是位置而不是"当前路线" —— 否则 agent 改走绕路时会把绕路也一起记成不能走。
+    transient_where: str = "north_corridor"
     start_battery: float = 100.0
     episodes: int = 3
 
@@ -54,10 +66,14 @@ class Scenario:
         )
 
 
-def _routes(*order: str, long_south: bool = False):
+_SHORT_SOUTH = (Pose(2.0, -2.0, 0.0), Pose(5.0, -2.0, 0.0),
+                Pose(9.0, -2.0, 0.0), Pose(10.0, -2.0, 0.0))
+
+
+def _routes(*order: str, long_south: bool = False, very_long_south: bool = False):
     """按给定顺序组装路线（顺序 = Planner 的偏好顺序）。"""
-    table = {"north": _SHORT_NORTH, "south": _LONG_SOUTH if long_south else (
-        Pose(2.0, -2.0, 0.0), Pose(5.0, -2.0, 0.0), Pose(9.0, -2.0, 0.0), Pose(10.0, -2.0, 0.0))}
+    south = _VERY_LONG_SOUTH if very_long_south else (_LONG_SOUTH if long_south else _SHORT_SOUTH)
+    table = {"north": _SHORT_NORTH, "south": south}
     return tuple((k, table[k]) for k in order)
 
 
@@ -87,7 +103,23 @@ def build_scenarios() -> Tuple[Scenario, ...]:
             routes=_routes("north", "south", long_south=True),
             obstacles=(),
             latency=lat,
-            transient_once=True,
+            transient_episodes=(0,),
+        ))
+
+    # --- B2. 连撞两次后恢复（**治过度泛化的靶场景** = 2）---
+    #     北线在 ep0、ep1 各失败一次 → 达到 min_hits=2 → 会生成"避开北线"的教训；
+    #     但 ep2 起北线已经通了。没有复核机制的 agent 会从此永久绕远路。
+    for lat in (None, "normal"):
+        out.append(Scenario(
+            name=f"two_strikes_then_clear_{lat or 'none'}",
+            goal="去充电站",
+            description="北线在 ep0/ep1 各被挡一次后恢复通畅；南线是超长绕路 —— 用来量「过度泛化」的代价",
+            kind="transient",
+            routes=_routes("north", "south", very_long_south=True),
+            obstacles=(),
+            latency=lat,
+            transient_episodes=(0, 1),
+            episodes=5,
         ))
 
     # --- C. 无障碍（对照组 = 2）---

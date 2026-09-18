@@ -45,6 +45,31 @@ class LessonStore:
         """当前应该避开的东西（路线名 / 区域名）。"""
         return tuple(l.avoid for l in self.active(min_confidence))
 
+    def weaken(self, avoid: str) -> Optional[Lesson]:
+        """**反证**：有人走通了这条被避开的路线 → 教训降一级。
+
+        这是治"一次偶发被当成永久教训"的关键一步 —— 教训必须能被撤销，
+        否则环境恢复了、agent 还在绕远路。
+
+        降级规则：`hits -= 1` 并重算置信度（`hits/(hits+1)`）；降到 0 就从库里删掉。
+        """
+        for k, l in list(self.lessons.items()):
+            if l.avoid != avoid:
+                continue
+            hits = l.hits - 1
+            if hits <= 0:
+                del self.lessons[k]
+                return None
+            out = Lesson(
+                id=l.id, trigger=l.trigger, avoid=l.avoid, prefer=l.prefer,
+                evidence=(l.evidence + f" | 反证：{avoid} 后来走通了")[:400],
+                confidence=min(0.95, hits / (hits + 1.0)),
+                hits=hits, scope=l.scope,
+            )
+            self.lessons[k] = out
+            return out
+        return None
+
     def all(self) -> List[Lesson]:
         return list(self.lessons.values())
 

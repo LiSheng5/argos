@@ -28,6 +28,13 @@ __all__ = ["EpisodeResult", "ScenarioResult", "run_scenario", "run_matrix", "DEF
 DEFAULT_SEEDS = (42, 7, 2026)
 
 
+#: 瞬时故障的**位置条件**。故障属于世界，不属于"agent 当时选的那条路"。
+_WHERE = {
+    "north_corridor": lambda a, w: float((a.params or {}).get("y", -99.0)) >= 1.0,
+    "anywhere": lambda a, w: True,
+}
+
+
 @dataclass
 class EpisodeResult:
     index: int
@@ -95,8 +102,9 @@ def run_scenario(scenario: Scenario, cfg: AgentConfig, seed: int) -> ScenarioRes
     for i in range(scenario.episodes):
         world = scenario.world()
         injector = FailureInjector(rng=random.Random(seed * 1000 + i))
-        if scenario.transient_once and i == 0:
-            injector.arm(FailReason.OBSTACLE_BLOCKED, once=True)
+        if i in scenario.transient_episodes:
+            injector.arm(FailReason.OBSTACLE_BLOCKED, once=True,
+                         where=_WHERE.get(scenario.transient_where))
         latency = get_profile(scenario.latency) if scenario.latency else None
         entity = MiniEntity(world, battery=scenario.start_battery)
         backend = SimulatorBackend(world=world, entity=entity, injector=injector,

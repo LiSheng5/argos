@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from argos.agent.interfaces import Action, ActionKind, FailReason, WorldState
 
@@ -42,6 +42,10 @@ class _Armed:
     on: Optional[ActionKind] = None    # None = 任何动作都生效
     probability: float = 1.0
     fired: int = 0
+    #: 位置/条件谓词 (action, world) -> bool。
+    #: ⚠️ 必须有这个：故障是**世界里某个位置**的属性，不是"agent 当时走的那条路"的属性。
+    #: 缺了它，agent 走绕路时被挡 → 会把绕路也记成"不能走" → 两条路全禁（实测踩到过）。
+    where: Optional[Callable[[Action, WorldState], bool]] = None
 
 
 @dataclass
@@ -53,14 +57,19 @@ class FailureInjector:
 
     def arm(self, reason: FailReason, *, once: bool = False,
             at_step: Optional[int] = None, on: Optional[ActionKind] = None,
-            probability: float = 1.0) -> "FailureInjector":
-        """登记一次（或持续）失败注入。返回 self 便于链式调用。"""
+            probability: float = 1.0,
+            where: Optional[Callable[[Action, WorldState], bool]] = None) -> "FailureInjector":
+        """登记一次（或持续）失败注入。返回 self 便于链式调用。
+
+        `where` 用来把故障绑到**位置**上（例：只在北侧走廊触发），
+        这样"换一条路绕开"才是有意义的成功，而不是把绕路也一起污染。
+        """
         if isinstance(reason, str):
             reason = FailReason(reason)
         if reason not in INJECTABLE:
             raise ValueError(f"{reason} 不可注入（闸门类的失败不能被伪造）：可注入的是 {sorted(r.value for r in INJECTABLE)}")
         self.armed.append(_Armed(reason=reason, once=once, at_step=at_step,
-                                 on=on, probability=probability))
+                                 on=on, probability=probability, where=where))
         return self
 
     def clear(self) -> None:
@@ -73,6 +82,8 @@ class FailureInjector:
             if item.at_step is not None and item.at_step != self.step:
                 continue
             if item.on is not None and action.kind != item.on:
+                continue
+            if item.where is not None and not item.where(action, world):
                 continue
             if item.probability < 1.0 and self.rng.random() >= item.probability:
                 continue
