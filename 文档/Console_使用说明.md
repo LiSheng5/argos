@@ -47,6 +47,10 @@ npm run dev
 
 模块清单与埋点方式见 **`文档/架构.md` §10**（单一信息源，此处不重复维护）。
 
+⚠️ **本界面服务的是旧运行时**（`brain` / `safety` / `executor`）。
+2026-09 新增的 SIM-first Runtime（`argos/agent/` 那套，含 benchmark / 感知 / 反思闭环）
+**没有接进这个界面** —— 它有自己的 CLI：`python -m argos.run` / `argos.benchmark` / `argos.demo`。
+
 一句话概括：**不改 brain / safety / executor 内部逻辑** —— 安全闸裁决靠包装
 `brain.backend`，tick 靠 `server.py` 多带一个可选 sink 回调，指令靠 Web 层自己包
 `try_command`。
@@ -55,9 +59,10 @@ npm run dev
 
 ```bash
 python -m pytest tests -q -p no:cacheprovider
-# 与 Console 相关的两个文件：test_web_console.py（10）旧端点不回归 / Run 全链路 /
-# 急停过闸 / 坏图拒绝 / WS 快照 / 缺传感器=null；test_tick_health.py（11）健康门四态 + 接线钉。
-# 当前总基线见 文档/小结_20260829.md §1（2026-09-15 实测 168 passed + 3 skipped）。
+# 与 Console 相关的三个文件：test_web_console.py（10）旧端点不回归 / Run 全链路 /
+# 急停过闸 / 坏图拒绝 / WS 快照 / 缺传感器=null；test_tick_health.py（11）健康门四态 + 接线钉；
+# test_estop_and_tick.py（6）急停到达执行器 / tick 不阻塞事件循环。
+# ⚠️ 总数不写在这里 —— 测试基线唯一权威源是 文档/小结_20260829.md §1（写死会过期）。
 ```
 
 ## 六、数据从哪来（能拿到 / 拿不到）

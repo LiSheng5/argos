@@ -165,7 +165,7 @@ python -m pytest tests -q -p no:cacheprovider
 |---|---|
 | 顶层架构 / 复用接缝 / 安全设计 | `文档/架构.md` |
 | **SIM-first 转向审计（缺口清单）** | `文档/SIM_FIRST_AUDIT.md` |
-| **Reflection Benchmark（四组配置实测对比）** | `文档/BENCHMARK.md` |
+| **Reflection Benchmark（6 组配置 × 24 场景 × 3 seed 实测）** | `文档/BENCHMARK.md` |
 | **端到端 Demo 逐步 trace** | `文档/demo_trace.md` |
 | **经验学习相关方案调研（别人怎么解 Reflection/Memory 的病）** | `文档/经验学习_相关方案调研.md` |
 | **后续路线（还没做完的，逐条列清）** | `文档/ROADMAP.md` |

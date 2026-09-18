@@ -15,7 +15,7 @@
 | §10–§14 | EmbodimentCapabilities / 安全层 / Watchdog / 延迟剖面 / 确定性 | ✅ | `gate.py`、`watchdog.py`、`latency.py`、同 seed 可复现测试 |
 | §15–§17 | Mini World / 完整 Demo / Trace | ✅ | `mini_world.py`、`文档/demo_trace.md`、`examples/sim_trace/` |
 | §18 | 暂时不要做（真机 / ROS2 / 复杂 GUI…） | ✅ | 全程遵守，真机代码冻结 |
-| §23 | benchmark 数据表 | ✅ | 22 场景 × 5 臂 × 3 seed = 330 组 |
+| §23 | benchmark 数据表 | ✅ | **24 场景 × 6 臂 × 3 seed = 432 组** |
 | §28 | correctness > complexity | ✅ | 旧代码零改、零回归守住 |
 | **§9** | **Memory 三类型（Episodic / Semantic / Procedural）** | ❌ | 现在只有一个 `LessonStore` |
 | **§19** | **感知 SensorBackend（SimVision/Battery/Pose/Obstacle）** | ❌ | 无 `argos/sensors/` |
@@ -136,7 +136,7 @@ Wave 2 得到的两条新结论（都进了 `文档/BENCHMARK.md` §4 自动推�
 ## 4. 红线（每波都必须守）
 
 - **旧运行时零改动**：`brain.py` / `executor.py` / `backend.py` / `safety.py` / `real_sport.py` /
-  `dds_entity.py` / `mujoco.py` 一行不改；测试基线**只增不减**（当前 265 passed + 3 skipped）。
+  `dds_entity.py` / `mujoco.py` 一行不改；测试基线**只增不减**（当前 331 passed + 3 skipped）。
 - **不伪造硬件**：`--backend go2` 必须明确报"未实现"，禁止用假真机代码冒充完成。
 - **能做实验验证的才上**：文献方案必须先在本仓库 benchmark 里跑出数字才算"借到了"
   （参考已实测的负结果：反思只写不读 = 零价值）。

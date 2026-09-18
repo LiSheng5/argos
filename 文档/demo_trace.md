@@ -63,6 +63,6 @@
 
 ```bash
 python -m argos.demo                                  # 生成本文件 + JSON trace
-python -m argos.benchmark all --out 文档/BENCHMARK.md  # 四组配置对比
+python -m argos.benchmark all --out 文档/BENCHMARK.md  # 各组配置对比（当前 6 组）
 python -m argos.benchmark run --scenario transient_jam_latency_none --config memory_only
 ```
