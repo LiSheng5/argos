@@ -202,7 +202,8 @@ def _conclusions(table, results, order) -> str:
                 if d and max(x.success_rate for x in d.values()) == 0.0]
     if hopeless:
         joined = "`, `".join(sorted(hopeless))
-        out.append(f"- ✅ **不是所有失败都该被学掉**：{len(hopeless)} 个场景四组全 0% "
+        # ⚠️ "几组"必须**动态算** —— 写成"四组"会在臂数变化后变成错的（实际踩到过）
+        out.append(f"- ✅ **不是所有失败都该被学掉**：{len(hopeless)} 个场景 {len(order)} 组配置全 0% "
                    f"（`{joined}`）—— 原因是**不在路线**上（如起步电量就低于闸门）。"
                    "反思在这里正确地**没有**乱学教训。")
     out.append("")
