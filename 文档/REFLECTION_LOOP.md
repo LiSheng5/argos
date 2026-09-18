@@ -127,8 +127,12 @@ ActionProposal → SafetyGate → SimulatorBackend → ActionResult(reason)
 
 ## 7. 已知限制（照实说）
 
-- 阈值 `min_hits=2` / `confidence ≥ 0.6` 与复核周期 `revalidate_every=2` **都是拍的值**，
-  没做扫参（Phase 7.1 待做）。
+- **阈值已扫过参**（`文档/SWEEP.md`，2026-09-18）：`min_hits` / `min_confidence` /
+  `window` / `min_failures` / `soft_threshold` 五个参数**在本场景集里都不敏感**
+  （成功率极差 ≤0.5 个百分点），所以"拍的值"这个风险**基本解除** ——
+  但**复核周期 `revalidate_every` 是真敏感的**（成功率极差 4.2 个百分点），
+  而且全局平均最优是 **0（不复核）**，与"特定场景下复核更好"并不矛盾（见 §5 两族对比）。
+  ⚠️ 结论只在本场景集成立：换世界要重扫（`python -m argos.benchmark sweep`）。
 - **反证削弱是粗糙规则**（成功一次降一级），没考虑"偶然成功一次不代表恢复"。
 - 教训只在**进程内存**里，尚无持久化与人工审阅入口。
 - 更严谨的方向：把路线选择当**非平稳多臂老虎机**（折扣/滑窗或变点检测），
