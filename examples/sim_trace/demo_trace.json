@@ -1,0 +1,471 @@
+{
+  "meta": {
+    "goal": "去充电站",
+    "seed": 42,
+    "episodes": 3,
+    "backend": "SimulatorBackend（仿真，非真机）",
+    "chain": "Goal → Plan → Action → SafetyGate → Simulator → Observation → Failure → Reflection → Memory → Replan",
+    "world": "Mini Robot World: Room A / Room B / Hallway / Door / north_block / Charger"
+  },
+  "episodes": [
+    {
+      "episode": 0,
+      "initial_route": "north",
+      "steps": [
+        {
+          "step": 1,
+          "phase": "action",
+          "route": "north",
+          "plan": "先朝向 north 路线第一个途经点",
+          "action": "turn(yaw=0.7853981633974483)",
+          "safety": null,
+          "simulator": "转向 0.79rad",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 0.7854
+        },
+        {
+          "step": 2,
+          "phase": "action",
+          "route": "north",
+          "plan": "沿 north 路线前进到 (2.0, 2.0)",
+          "action": "move(x=2.0,y=2.0)",
+          "safety": null,
+          "simulator": "移动 2.83m",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 6.4423
+        },
+        {
+          "step": 3,
+          "phase": "action",
+          "route": "north",
+          "plan": "沿 north 路线前进到 (5.0, 2.0)",
+          "action": "move(x=5.0,y=2.0)",
+          "safety": null,
+          "simulator": null,
+          "observation": null,
+          "failure": "obstacle_blocked: 路径被 north_block 挡住",
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 6.4423
+        },
+        {
+          "step": 4,
+          "phase": "action",
+          "route": "south",
+          "plan": "先朝向 south 路线第一个途经点",
+          "action": "turn(yaw=-1.5707963267948966)",
+          "safety": null,
+          "simulator": "转向 -1.57rad",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 8.7984
+        },
+        {
+          "step": 5,
+          "phase": "action",
+          "route": "south",
+          "plan": "沿 south 路线前进到 (2.0, -2.0)",
+          "action": "move(x=2.0,y=-2.0)",
+          "safety": null,
+          "simulator": "移动 4.00m",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 16.7984
+        },
+        {
+          "step": 6,
+          "phase": "action",
+          "route": "south",
+          "plan": "沿 south 路线前进到 (5.0, -2.0)",
+          "action": "move(x=5.0,y=-2.0)",
+          "safety": null,
+          "simulator": "移动 3.00m",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 22.7984
+        },
+        {
+          "step": 7,
+          "phase": "action",
+          "route": "south",
+          "plan": "沿 south 路线前进到 (9.0, -2.0)",
+          "action": "move(x=9.0,y=-2.0)",
+          "safety": null,
+          "simulator": "移动 4.00m",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 30.7984
+        },
+        {
+          "step": 8,
+          "phase": "action",
+          "route": "south",
+          "plan": "沿 south 路线前进到 (10.0, -2.0)",
+          "action": "move(x=10.0,y=-2.0)",
+          "safety": null,
+          "simulator": "移动 1.00m",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 32.7984
+        },
+        {
+          "step": 9,
+          "phase": "action",
+          "route": "south",
+          "plan": "到达后停车",
+          "action": "stop()",
+          "safety": null,
+          "simulator": "已停止",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 33.2984
+        }
+      ],
+      "outcome": {
+        "ok": true,
+        "steps": 9,
+        "failures": 1,
+        "replans": 1,
+        "stop_reason": "完成",
+        "final_pose": {
+          "x": 10.0,
+          "y": -2.0
+        },
+        "sim_time": 33.2984
+      },
+      "reflection": [],
+      "memory_after": {
+        "lessons": []
+      }
+    },
+    {
+      "episode": 1,
+      "initial_route": "north",
+      "steps": [
+        {
+          "step": 1,
+          "phase": "action",
+          "route": "north",
+          "plan": "先朝向 north 路线第一个途经点",
+          "action": "turn(yaw=0.7853981633974483)",
+          "safety": null,
+          "simulator": "转向 0.79rad",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 0.7854
+        },
+        {
+          "step": 2,
+          "phase": "action",
+          "route": "north",
+          "plan": "沿 north 路线前进到 (2.0, 2.0)",
+          "action": "move(x=2.0,y=2.0)",
+          "safety": null,
+          "simulator": "移动 2.83m",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 6.4423
+        },
+        {
+          "step": 3,
+          "phase": "action",
+          "route": "north",
+          "plan": "沿 north 路线前进到 (5.0, 2.0)",
+          "action": "move(x=5.0,y=2.0)",
+          "safety": null,
+          "simulator": null,
+          "observation": null,
+          "failure": "obstacle_blocked: 路径被 north_block 挡住",
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 6.4423
+        },
+        {
+          "step": 4,
+          "phase": "action",
+          "route": "south",
+          "plan": "先朝向 south 路线第一个途经点",
+          "action": "turn(yaw=-1.5707963267948966)",
+          "safety": null,
+          "simulator": "转向 -1.57rad",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 8.7984
+        },
+        {
+          "step": 5,
+          "phase": "action",
+          "route": "south",
+          "plan": "沿 south 路线前进到 (2.0, -2.0)",
+          "action": "move(x=2.0,y=-2.0)",
+          "safety": null,
+          "simulator": "移动 4.00m",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 16.7984
+        },
+        {
+          "step": 6,
+          "phase": "action",
+          "route": "south",
+          "plan": "沿 south 路线前进到 (5.0, -2.0)",
+          "action": "move(x=5.0,y=-2.0)",
+          "safety": null,
+          "simulator": "移动 3.00m",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 22.7984
+        },
+        {
+          "step": 7,
+          "phase": "action",
+          "route": "south",
+          "plan": "沿 south 路线前进到 (9.0, -2.0)",
+          "action": "move(x=9.0,y=-2.0)",
+          "safety": null,
+          "simulator": "移动 4.00m",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 30.7984
+        },
+        {
+          "step": 8,
+          "phase": "action",
+          "route": "south",
+          "plan": "沿 south 路线前进到 (10.0, -2.0)",
+          "action": "move(x=10.0,y=-2.0)",
+          "safety": null,
+          "simulator": "移动 1.00m",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 32.7984
+        },
+        {
+          "step": 9,
+          "phase": "action",
+          "route": "south",
+          "plan": "到达后停车",
+          "action": "stop()",
+          "safety": null,
+          "simulator": "已停止",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 33.2984
+        }
+      ],
+      "outcome": {
+        "ok": true,
+        "steps": 9,
+        "failures": 1,
+        "replans": 1,
+        "stop_reason": "完成",
+        "final_pose": {
+          "x": 10.0,
+          "y": -2.0
+        },
+        "sim_time": 33.2984
+      },
+      "reflection": [
+        {
+          "id": "lesson:route:north:obstacle_blocked",
+          "trigger": "route:north",
+          "avoid": "north",
+          "prefer": "south",
+          "evidence": "路径被 north_block 挡住 | 路径被 north_block 挡住",
+          "confidence": 0.6666666666666666,
+          "hits": 2,
+          "scope": "route:north"
+        }
+      ],
+      "memory_after": {
+        "lessons": [
+          {
+            "id": "lesson:route:north:obstacle_blocked",
+            "trigger": "route:north",
+            "avoid": "north",
+            "prefer": "south",
+            "evidence": "路径被 north_block 挡住 | 路径被 north_block 挡住",
+            "confidence": 0.6666666666666666,
+            "hits": 2,
+            "scope": "route:north"
+          }
+        ]
+      }
+    },
+    {
+      "episode": 2,
+      "initial_route": "south",
+      "steps": [
+        {
+          "step": 1,
+          "phase": "action",
+          "route": "south",
+          "plan": "先朝向 south 路线第一个途经点",
+          "action": "turn(yaw=-0.7853981633974483)",
+          "safety": null,
+          "simulator": "转向 -0.79rad",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 0.7854
+        },
+        {
+          "step": 2,
+          "phase": "action",
+          "route": "south",
+          "plan": "沿 south 路线前进到 (2.0, -2.0)",
+          "action": "move(x=2.0,y=-2.0)",
+          "safety": null,
+          "simulator": "移动 2.83m",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 6.4423
+        },
+        {
+          "step": 3,
+          "phase": "action",
+          "route": "south",
+          "plan": "沿 south 路线前进到 (5.0, -2.0)",
+          "action": "move(x=5.0,y=-2.0)",
+          "safety": null,
+          "simulator": "移动 3.00m",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 12.4423
+        },
+        {
+          "step": 4,
+          "phase": "action",
+          "route": "south",
+          "plan": "沿 south 路线前进到 (9.0, -2.0)",
+          "action": "move(x=9.0,y=-2.0)",
+          "safety": null,
+          "simulator": "移动 4.00m",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 20.4423
+        },
+        {
+          "step": 5,
+          "phase": "action",
+          "route": "south",
+          "plan": "沿 south 路线前进到 (10.0, -2.0)",
+          "action": "move(x=10.0,y=-2.0)",
+          "safety": null,
+          "simulator": "移动 1.00m",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 22.4423
+        },
+        {
+          "step": 6,
+          "phase": "action",
+          "route": "south",
+          "plan": "到达后停车",
+          "action": "stop()",
+          "safety": null,
+          "simulator": "已停止",
+          "observation": null,
+          "failure": null,
+          "reflection": null,
+          "memory": null,
+          "replan": null,
+          "sim_time": 22.9423
+        }
+      ],
+      "outcome": {
+        "ok": true,
+        "steps": 6,
+        "failures": 0,
+        "replans": 0,
+        "stop_reason": "完成",
+        "final_pose": {
+          "x": 10.0,
+          "y": -2.0
+        },
+        "sim_time": 22.9423
+      },
+      "reflection": [],
+      "memory_after": {
+        "lessons": [
+          {
+            "id": "lesson:route:north:obstacle_blocked",
+            "trigger": "route:north",
+            "avoid": "north",
+            "prefer": "south",
+            "evidence": "路径被 north_block 挡住 | 路径被 north_block 挡住",
+            "confidence": 0.6666666666666666,
+            "hits": 2,
+            "scope": "route:north"
+          }
+        ]
+      }
+    }
+  ]
+}

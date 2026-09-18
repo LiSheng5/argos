@@ -6,7 +6,7 @@
 ArgOS 把"游戏 NPC 大脑"移植到了机器狗身上：文本指令 → 编译 → 落账 → 安全闸 → 执行 → 到点记账 → 记忆回流。大脑与执行器分离，真机到手只需换执行器，大脑一行不改。
 
 **诚实声明：**
-- ✅ 大脑层（编译/落账/安全/记忆/服务）在物理仿真里完整验证，218 项测试通过 + 3 项跳过（裸环境实测 2026-09-17；DDS 三例需宇树上游 SDK，装好后 221 全绿）
+- ✅ 大脑层（编译/落账/安全/记忆/服务）在物理仿真里完整验证，254 项测试通过 + 3 项跳过（裸环境实测 2026-09-18；DDS 三例需宇树上游 SDK，装好后 257 全绿）
 - ✅ SIM-first Embodied Agent Runtime 已跑通闭环：Simulator 是一等公民，失败可注入、反思会改下一次计划（见下节）
 - ✅ 真机执行器（高层 SportClient + 闭环控制器 + 断链看门狗）代码与单测就绪
 - ✅ Web Console（观察 + 控制层）可用，只观测与下发指令、不决策
@@ -53,10 +53,18 @@ User Goal → Brain → Planner → ActionProposal → SafetyGate → Executor
 - **反思真的改变下一次计划**：失败 → Lesson（`trigger / avoid / prefer / evidence / confidence`）
   → Planner 检索 → 换路线。闭环有测试钉着（`tests/test_closed_loop.py`）：
   第 1 次撞北线 → 换南线到达；第 2 次再撞 → 产出 Lesson；**第 3 次在规划阶段就避开北线，零失败到达**。
+- **看门狗与延迟也是可实验的**：`AgentWatchdog` 盯心跳 / 动作 / 后端三类超时，跳闸即安全停止并记
+  `WATCHDOG_TRIGGERED`；六档延迟剖面（50ms~1s）+ 丢包，全部走**逻辑时钟**，因此同 seed 仍可复现。
+- **有 benchmark，而且会把负结果写出来**：`python -m argos.benchmark all` 跑 20 场景 ×
+  4 组配置 × 3 个 seed，输出成功率 / 重试 / 动作数 / 耗时 / 失败数对比表。
+  当前实测的诚实结论（见 `文档/BENCHMARK.md`）：**「反思只写不读」与完全不做反思逐位相同（零价值）**；
+  只记忆不反思学得更快但**会把一次偶发当成永久教训、从此绕远路**。
+- **可解释**：`python -m argos.demo` 导出逐步 JSON trace 与 `文档/demo_trace.md`，
+  没有的字段写 `null`，不编造。
 - ⚠️ **全部是仿真**：不接硬件、不伪造 real executor。真机代码（`real_sport.py` / `dds_entity.py` /
   `sim/mujoco.py`）已冻结，仅作为未来 RobotBackend 的素材保留。
 
-完整审计与缺口清单见 `文档/SIM_FIRST_AUDIT.md`。
+完整审计与缺口清单见 `文档/SIM_FIRST_AUDIT.md`，实验数据见 `文档/BENCHMARK.md`，逐步 trace 见 `文档/demo_trace.md`。
 
 ## 性格（可选 LLM）
 
@@ -117,8 +125,8 @@ cd console && npm install && npm run dev       # 前端 localhost:5173
 
 ```bash
 python -m pytest tests -q -p no:cacheprovider
-# 218 passed, 3 skipped        ← 裸环境实测（2026-09-17）
-# 装了宇树上游 SDK（unitree_sdk2py，见 requirements.txt 第 4 节）后为 221 passed, 0 skipped
+# 254 passed, 3 skipped        ← 裸环境实测（2026-09-18）
+# 装了宇树上游 SDK（unitree_sdk2py，见 requirements.txt 第 4 节）后为 257 passed, 0 skipped
 # 注：test_dds_sim / test_dds_walk / test_dds_closed_loop 三例跑真实物理仿真 + DDS 闭环，
 #     对机器负载敏感（走位与关节收敛有随机性），负载高时会失败 —— 与大脑层改动无关，
 #     排查记录见 文档/反思层有效性探测_20260905.md §5.5
@@ -151,6 +159,8 @@ python -m pytest tests -q -p no:cacheprovider
 |---|---|
 | 顶层架构 / 复用接缝 / 安全设计 | `文档/架构.md` |
 | **SIM-first 转向审计（缺口清单）** | `文档/SIM_FIRST_AUDIT.md` |
+| **Reflection Benchmark（四组配置实测对比）** | `文档/BENCHMARK.md` |
+| **端到端 Demo 逐步 trace** | `文档/demo_trace.md` |
 | 可行性调研 | `文档/ai搜索后相关项目后做的可行性调研.md` |
 | 上狗前必读 | `文档/真机安全清单.md` |
 | 开发小结与实测数据（含逐文件用例数） | `文档/小结_20260829.md` |
