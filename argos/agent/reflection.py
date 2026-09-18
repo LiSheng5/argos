@@ -19,7 +19,12 @@ from typing import Dict, List, Optional, Tuple
 from argos.agent.interfaces import FailReason, Lesson
 from argos.agent.memory_agent import DEFAULT_MIN_CONFIDENCE, LessonStore
 
-__all__ = ["Reflector"]
+__all__ = ["Reflector", "ROUTE_REASONS"]
+
+#: 只有这些失败原因意味着"**换条路能解决**"，才允许生成"避开某条路线"的 Lesson。
+#: 反例：低电量（BATTERY_LOW）时路线没问题，学成"北线不能走"就是**错误因果**
+#: —— 这是本轮 benchmark 实测暴露出来的限制，见 `文档/BENCHMARK.md`。
+ROUTE_REASONS = frozenset({FailReason.OBSTACLE_BLOCKED, FailReason.PATH_INVALID})
 
 
 @dataclass
@@ -42,6 +47,9 @@ class Reflector:
         只有 LEARNING_REASONS 里的原因才记 —— 闸的拒绝不进这里。
         """
         if not isinstance(reason, FailReason) or reason not in _learnable():
+            return 0
+        if reason not in ROUTE_REASONS:
+            # 记数是记数，但**不生成"避开这条路"的经验** —— 原因不在这里。
             return 0
         key = (trigger, reason.value)
         self._counts[key] = self._counts.get(key, 0) + 1
@@ -70,6 +78,7 @@ class Reflector:
                 evidence=" | ".join(self._evidence.get((trigger, reason), []))[:300],
                 confidence=confidence,
                 hits=hits,
+                scope=f"route:{route}",
             )
             out.append(self.store.add(lesson))
         return out

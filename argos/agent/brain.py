@@ -25,7 +25,7 @@ from argos.agent.interfaces import (
     Lesson,
     Pose,
 )
-from argos.agent.memory_agent import LessonStore
+from argos.agent.memory_agent import DEFAULT_MIN_CONFIDENCE, LessonStore
 from argos.agent.planner import Plan, Planner
 from argos.agent.reflection import Reflector
 from argos.world.state import from_observation, view
@@ -73,6 +73,7 @@ class AgentBrain:
         store: Optional[LessonStore] = None,
         max_steps: int = 40,
         max_retry: int = 2,
+        lesson_threshold: float = DEFAULT_MIN_CONFIDENCE,
     ) -> None:
         self.backend = backend
         self.planner = planner
@@ -80,6 +81,9 @@ class AgentBrain:
         self.store = store or self.reflector.store
         self.max_steps = int(max_steps)
         self.max_retry = int(max_retry)
+        # 读 Lesson 的置信度门槛。必须与 Reflector 写入门槛**用同一个值**，
+        # 否则会出现"写出来了但读不到"（0.5 的教训被 0.6 的读门槛滤掉，踩过）。
+        self.lesson_threshold = float(lesson_threshold)
 
     # ---- 主循环 ----
     def run(self, goal: str) -> RunResult:
@@ -90,7 +94,7 @@ class AgentBrain:
                              stop_reason="未配置 Planner")
 
         v = self._view()
-        plan = self.planner.plan(goal, v, self.store.active(), caps)
+        plan = self.planner.plan(goal, v, self.store.active(self.lesson_threshold), caps)
         if plan is None:
             return RunResult(ok=False, goal=goal, steps=0, failures=0, replans=0,
                              final_pose=v.robot,
@@ -132,7 +136,7 @@ class AgentBrain:
             if retries < self.max_retry:
                 retries += 1
                 new_plan = self.planner.replan(plan, self._view(),
-                                               self.store.active(), caps)
+                                               self.store.active(self.lesson_threshold), caps)
                 if new_plan is not None:
                     plan = new_plan
                     queue = list(new_plan.proposals)

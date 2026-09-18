@@ -25,7 +25,9 @@ from argos.agent.interfaces import (
     Pose,
     WorldState,
 )
+from argos.agent.watchdog import AgentWatchdog, TRIGGER_TAG
 from argos.sim.failure_injector import FailureInjector
+from argos.sim.latency import LatencyProfile
 from argos.sim.mini_entity import MiniEntity
 from argos.world.mini_world import MiniWorld, build_default_world
 from argos.world.state import bump, view
@@ -44,6 +46,8 @@ class SimulatorBackend:
         injector: Optional[FailureInjector] = None,
         seed: Optional[int] = None,
         start_at: Optional[str] = "room_a",
+        latency: Optional[LatencyProfile] = None,
+        watchdog: Optional[AgentWatchdog] = None,
     ) -> None:
         self.world = world or build_default_world()
         self.rng = random.Random(seed)
@@ -62,6 +66,8 @@ class SimulatorBackend:
         )
         self.gate = gate or ActionGate(self.caps)
         self.injector = injector or FailureInjector(rng=self.rng)
+        self.latency = latency
+        self.watchdog = watchdog
         self.steps = 0
         self.state = WorldState(
             robot=self.entity.pose,
@@ -97,9 +103,28 @@ class SimulatorBackend:
         )
 
     def apply(self, action: Action) -> ActionResult:
-        """唯一动作出口：**闸门 → 失败注入 → 执行器 → 写世界**。"""
+        """唯一动作出口：**看门狗 → 闸门 → 失败注入 → 延迟 → 执行器 → 写世界**。"""
         self.steps += 1
         before = self.entity.pose
+        t0 = self.state.sim_time
+
+        # 0) 看门狗：跳闸后除 STOP 外一律拒绝（fail-closed，须显式 reset）
+        #    心跳语义 = "距离上一次**成功完成**的动作过了多久"，所以这里只 check 不 beat；
+        #    beat 放在动作完成之后（见第 6 步）。
+        if self.watchdog is not None:
+            if self.watchdog.tripped:
+                # 已处于安全停止态：除 STOP（安全动作本身）外一律拒绝；
+                # 也不再重复做超时判据 —— 都停住了，没有"跟不上"可言。
+                if action.kind != ActionKind.STOP:
+                    return self._record(ActionResult(
+                        ok=False, reason=FailReason.ACTION_TIMEOUT,
+                        detail="看门狗已跳闸，需显式 reset（安全停止中）",
+                        pose_before=before, pose_after=before, sim_time=t0))
+            else:
+                lost = self.watchdog.check(t0)
+                if lost:
+                    return self._trip(lost, before)
+                self.watchdog.begin_action(t0)
 
         # 1) 闸（不可绕过）
         ok, reason, detail = self.gate.check(action, self.state)
@@ -117,12 +142,47 @@ class SimulatorBackend:
                 pose_before=before, pose_after=before, sim_time=self.state.sim_time,
             ))
 
-        # 3) 真的执行
+        # 3) 模拟网络/时序延迟（走逻辑时钟，不做真实 sleep → benchmark 仍可复现）
+        if self.latency is not None:
+            d_ms = self.latency.sample_ms(self.rng)
+            self.entity.advance(d_ms / 1000.0)
+            if self.latency.drops(self.rng):
+                res = ActionResult(
+                    ok=False, reason=FailReason.NETWORK_DELAY,
+                    detail=f"模拟丢包（{self.latency.name}，{d_ms:.0f}ms）",
+                    pose_before=before, pose_after=before,
+                    sim_time=self.entity.sim_time)
+                self._sync(res)
+                return self._record(res)
+
+        # 4) 真的执行
         res = self.entity.apply(action)
 
-        # 4) 只有这里能写世界
+        # 5) 只有这里能写世界
         self._sync(res)
+
+        # 6) 看门狗事后判"这次动作是不是太慢了"，然后给这一步打个心跳
+        if self.watchdog is not None and not self.watchdog.tripped:
+            over = self.watchdog.check_action(self.state.sim_time)
+            if over:
+                return self._trip(over, self.entity.pose)
+            self.watchdog.end_action(self.state.sim_time)
+            self.watchdog.beat(self.state.sim_time)
         return self._record(res)
+
+    def reset_watchdog(self) -> None:
+        """显式复位（跳闸后不会自动恢复 —— 断过一次就该停下来被人看一眼）。"""
+        if self.watchdog is not None:
+            self.watchdog.reset()
+
+    def advance_time(self, seconds: float, sync: bool = True) -> None:
+        """让世界空转一段逻辑时间（两次动作之间的间隔 / 卡顿）。
+
+        `sync=True` 时把 entity 的时间镜像进 WorldState —— 保证"世界只有一个时钟"。
+        """
+        self.entity.advance(float(seconds))
+        if sync:
+            self._sync(ActionResult(ok=True, sim_time=self.entity.sim_time))
 
     def estop(self, on: bool = True) -> None:
         self.gate.set_estop(on)
@@ -135,6 +195,20 @@ class SimulatorBackend:
              sim_time=self.entity.sim_time)
         if not res.ok:
             self.state.events.append(f"{res.reason.value}: {res.detail}")
+
+    def _trip(self, why: str, pose) -> ActionResult:
+        """跳闸：记录 WATCHDOG_TRIGGERED + 强制安全停止 + 返回可学习失败。"""
+        if self.watchdog is not None:
+            self.watchdog.trip(why)
+        self.entity.safe_stop()
+        # 收速必须落进 WorldState，否则"停下来"只停在 entity 里、对外观察仍是旧速度
+        self._sync(ActionResult(ok=False, reason=FailReason.ACTION_TIMEOUT,
+                                sim_time=self.entity.sim_time))
+        self.state.events.append(f"{TRIGGER_TAG}: {why}")
+        return ActionResult(
+            ok=False, reason=FailReason.ACTION_TIMEOUT,
+            detail=f"看门狗跳闸：{why}",
+            pose_before=pose, pose_after=pose, sim_time=self.state.sim_time)
 
     def _record(self, res: ActionResult) -> ActionResult:
         return res

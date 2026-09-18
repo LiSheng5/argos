@@ -53,6 +53,15 @@ class MiniEntity:
     def pose(self) -> Pose:
         return self._pose
 
+    # ---- 外部可用的时间推进（延迟剖面 / watchdog 打点用；只推进时钟，不产生动作）----
+    def advance(self, seconds: float) -> None:
+        self._advance(seconds)
+
+    def safe_stop(self) -> None:
+        """强制收速：清掉速度分量（watchdog 跳闸时用）。"""
+        p = self._pose
+        self._pose = Pose(p.x, p.y, p.yaw, 0.0, 0.0, 0.0)
+
     # ---- 写（只有本类和 backend 能改）----
     def apply(self, action: Action) -> ActionResult:
         before = self._pose

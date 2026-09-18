@@ -192,6 +192,7 @@ class Lesson:
     * trigger: 触发场景（如 `route:north`）
     * avoid  : 以后避开什么
     * prefer : 改用什么
+    * scope  : 这条经验的适用域（如 `route:north`）—— 防止把"低电量"学成"这条路不行"
     * evidence: 源事实原文（防编造：没有证据的 Lesson 不该被采纳）
     """
     id: str
@@ -201,6 +202,7 @@ class Lesson:
     evidence: str = ""
     confidence: float = 0.0
     hits: int = 1
+    scope: str = ""
 
     def matches(self, candidate: str) -> bool:
         """候选路线/目标是否命中这条教训的 avoid。"""
