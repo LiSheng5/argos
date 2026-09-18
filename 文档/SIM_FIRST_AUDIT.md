@@ -4,6 +4,11 @@
 > 被审对象：`D:\ArgOS`（github.com/LiSheng5/argos）
 > 前提：**当前没有任何真实机器人硬件。** 本文件回答"哪些能直接用、哪些错误假设了真机、缺口在哪"。
 > 后续路线见 `目录/.workbuddy/plans/` 的实施方案；本轮范围 Phase 0–4。
+>
+> ⚠️ **本文件是 Phase 0 的审计快照（2026-09-17 当时的现状），不随代码更新。**
+> 它点出的缺口（世界模型 / Replan / 失败分类 / 失败注入）**已在 2026-09-18 全部补上** ——
+> 现状请看 `文档/架构.md` §11 与 `文档/WORLD_MODEL.md` / `REFLECTION_LOOP.md` / `SIMULATION.md`。
+> 保留本文件的价值在于**记录"为什么当初要新建一套 runtime"**，而不是描述现在。
 
 ---
 
@@ -134,12 +139,14 @@ server / API 均只到 Brain（`server.py:144/163`、`web/api.py:185/261/312`）
 | 假 LLM fail | `tests/test_brain.py:258` |
 
 指令要求的 `obstacle_blocked / action_timeout / path_invalid / localization_error / battery_low /
-sensor_missing / simulator_delay / network_delay / executor_failure` —— **全部无法主动注入**
+sensor_missing / simulator_delay / network_delay / executor_failure` —— **当时全部无法主动注入**
+（✅ **现已能注入**：`argos/sim/failure_injector.py` 九类 + 可绑世界位置 `where`，见 `文档/SIMULATION.md` §4）
 （现有 `ARGOS_*` 环境变量只有 API_KEY / MODEL / TIMEOUT / VECTOR_ANCHOR / READ_TIMEOUT / EXECUTOR / PORT / PERSONA）。
 
 ## 10. 是否可以通过 simulator 完整复现「感知 → 规划 → 行动 → 失败 → 修正」
 
-**❌ 不能。** 三处硬缺口：
+**❌ 当时不能。** 三处硬缺口（✅ **三条现均已补上**：世界模型见 `WORLD_MODEL.md`、`replan`
+见 `REFLECTION_LOOP.md` §1、失败分类见 `SIMULATION.md` §4 —— 现状以新文档为准）：
 
 1. **无世界模型**：只有"地名→坐标"字典（`brain.py:78-84`：充电桩 / 家 / 桌边 / 门口）+ 矩形边界（`safety.py:18`）。
    无房间、走廊、门、障碍、充电站实体。MuJoCo 场景只是地平面 + 几个 box，属于上游资产不是项目资产。
