@@ -13,8 +13,30 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
-from argos.agent.interfaces import Pose
+from argos.agent.interfaces import FailReason, Pose
+from argos.sensors import simulated_suite, suite_of
 from argos.world.mini_world import MiniWorld, Rect, build_default_world
+
+
+@dataclass(frozen=True)
+class SensorSpec:
+    """场景里"传感器有多不可靠"。
+
+    默认全 0/宽松 = 不配传感器（上帝视角），行为与从前逐字一致；
+    一旦指定，runner 会真的给 backend 装上这套传感器 ——
+    于是**感知层第一次进入 benchmark**（在此之前它只在单测里验证过）。
+    """
+    pose_noise: float = 0.0          # 定位噪声（米）
+    pose_dropout: float = 0.0        # 定位失灵概率（每次读）
+    battery_step: float = 0.0        # 电量量化步长
+    obstacle_radius: float = 5.0     # 障碍探测半径（米）
+    vision_radius: float = 6.0       # 视觉探测半径（米）
+
+    def build(self, seed: int):
+        return suite_of(*simulated_suite(
+            seed=seed, pose_noise=self.pose_noise, pose_dropout=self.pose_dropout,
+            battery_step=self.battery_step, obstacle_radius=self.obstacle_radius,
+            vision_radius=self.vision_radius))
 
 #: 加长版南线：比北线多两个途经点，用来度量"绕路成本"
 _LONG_SOUTH = (
@@ -51,6 +73,11 @@ class Scenario:
     #: 瞬时故障绑在哪个**世界位置**上（见 runner 的 _WHERE 表）。
     #: 必须是位置而不是"当前路线" —— 否则 agent 改走绕路时会把绕路也一起记成不能走。
     transient_where: str = "north_corridor"
+    #: 注入**哪一类**失败。默认是障碍阻挡；换成别的才能回答
+    #: "反思/记忆在**非路线类**失败上还该不该起作用"（见 G/H 族）。
+    failure: FailReason = FailReason.OBSTACLE_BLOCKED
+    #: 感知配置。None = 不装传感器（上帝视角，与历史基线逐字一致）。
+    sensors: Optional[SensorSpec] = None
     start_battery: float = 100.0
     episodes: int = 3
     #: 单次运行的**动作预算**。预算紧时才区分得出"学过 vs 没学过"：
@@ -185,6 +212,74 @@ def build_scenarios() -> Tuple[Scenario, ...]:
             obstacles=(),
             latency=lat,
         ))
+
+    # --- G. 路线类失败，但**换一种原因**：path_invalid（= 2）---
+    #     与 two_strikes_then_clear 同形，只把注入类型从「障碍阻挡」换成「路径失效」。
+    #     PATH_INVALID 与 OBSTACLE_BLOCKED 同属"路线相关"失败 → **学习应当照样有用**。
+    #     这一族的作用：把"反思有效"的结论从 1 类失败扩到第 2 类。
+    for lat in (None, "normal"):
+        out.append(Scenario(
+            name=f"two_strikes_path_invalid_{lat or 'none'}",
+            goal="去充电站",
+            description="北线在 ep0/ep1 各「路径失效」一次后恢复；南线超长绕路 —— 换一种失败原因重测学习是否有效",
+            kind="route_failure",
+            routes=_routes("north", "south", very_long_south=True),
+            obstacles=(),
+            latency=lat,
+            failure=FailReason.PATH_INVALID,
+            transient_episodes=(0, 1),
+            episodes=5,
+        ))
+
+    # --- H. **非路线类**失败（负对照）：学习**不该**起作用（= 6）---
+    #     这些失败不是"这条路的问题"（定位漂移 / 超时 / 执行器故障 / 模拟器延迟 /
+    #     缺传感器 / 电量低）→ 正确行为是**统计得到，但绝不生成"避开这条路"的教训**。
+    #     如果这里出现"学过 vs 没学过"的差异，说明有层级把非路线失败算在了路线头上。
+    for kind in (FailReason.LOCALIZATION_ERROR, FailReason.ACTION_TIMEOUT,
+                 FailReason.EXECUTOR_FAILURE, FailReason.SIMULATOR_DELAY,
+                 FailReason.SENSOR_MISSING, FailReason.BATTERY_LOW):
+        out.append(Scenario(
+            name=f"nonroute_failure_{kind.value}",
+            goal="去充电站",
+            description=f"北线在 ep0/ep1 各注入一次「{kind.value}」—— 这不是路线的问题，反思不该乱学",
+            kind="nonroute_failure",
+            routes=_routes("north", "south", very_long_south=True),
+            obstacles=(),
+            failure=kind,
+            transient_episodes=(0, 1),
+            episodes=4,
+        ))
+
+    # --- I. 感知状态（三档 = 3）—— 感知层第一次进 benchmark ---
+    out.append(Scenario(
+        name="sensor_pose_noise",
+        goal="去充电站",
+        description="定位有 0.3m 噪声（但不失灵）—— 看带噪声的观测会不会把任务带偏",
+        kind="perception",
+        routes=_routes("north", "south"),
+        obstacles=(),
+        sensors=SensorSpec(pose_noise=0.3, battery_step=1.0),
+    ))
+    out.append(Scenario(
+        name="sensor_pose_dropout",
+        goal="去充电站",
+        description="定位每次读有 15% 概率失灵 → 闸门 fail-closed 拒动；量「宁可不动」的代价",
+        kind="perception",
+        routes=_routes("north", "south"),
+        obstacles=(),
+        sensors=SensorSpec(pose_dropout=0.15),
+        episodes=4,
+    ))
+    out.append(Scenario(
+        name="sensor_range_limited",
+        goal="去充电站",
+        description="北线有永久障碍，但障碍探测半径只有 1m —— 观测里**看不见**它，世界照样挡：只能撞了才知道",
+        kind="perception",
+        routes=_routes("north", "south"),
+        obstacles=(Rect("north_block", 5.0, 2.0, 2.0, 1.5),),
+        sensors=SensorSpec(obstacle_radius=1.0, vision_radius=1.5),
+        episodes=4,
+    ))
 
     # --- F. 永久障碍 + 链路不稳（组合 = 3）---
     for lat in ("normal", "slow", "packet_loss"):

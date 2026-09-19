@@ -34,24 +34,39 @@ def _dist(ax: float, ay: float, bx: float, by: float) -> float:
 
 @dataclass
 class SimPoseSensor:
+    """定位传感器。
+
+    两条**刻意**的建模选择（都吃过亏）：
+
+    * **噪声 = 整轮固定的标定偏差**，不是每次读重新抖动。
+      真实传感器不会"读一次抖一次"；而且"每次读都掷骰子"会让观测结果取决于
+      **你读了几次** —— `_view()` 读一次、闸门再读一次，两次结果不同，
+      于是"这一步缺不缺数据"变成了调用次数的偶然函数（实测踩到：闸门恰好没掷中）。
+    * **失灵是粘性的**：坏了就坏这一轮（新的一轮会新建传感器，自然恢复）。
+      不粘的话会出现"忽好忽坏"，闸门时好时坏，行为不可解释。
+    """
     name: str = "pose"
     obs_field: str = "robot_pose"
-    noise_m: float = 0.0          # 定位噪声（米）
-    dropout: float = 0.0          # 失灵概率
+    noise_m: float = 0.0          # 定位偏差（米），整轮固定
+    dropout: float = 0.0          # 整轮失灵概率（每轮只掷一次）
     rng: random.Random = dc_field(default_factory=lambda: random.Random(0))
+    _bias: Optional[Tuple[float, float]] = None
+    _dead: bool = False
 
     def read(self, entity, world) -> Optional[Pose]:
+        if self._dead:
+            return None                      # 粘性：坏了就一直是坏的
         if self.dropout > 0 and self.rng.random() < self.dropout:
+            self._dead = True
             return None
         p = entity.pose
         if self.noise_m <= 0:
             return p
-        return Pose(
-            x=p.x + self.rng.uniform(-self.noise_m, self.noise_m),
-            y=p.y + self.rng.uniform(-self.noise_m, self.noise_m),
-            yaw=p.yaw,
-            vx=p.vx, vy=p.vy, vyaw=p.vyaw,
-        )
+        if self._bias is None:               # 只掷一次 → 整轮同一个偏差
+            self._bias = (self.rng.uniform(-self.noise_m, self.noise_m),
+                          self.rng.uniform(-self.noise_m, self.noise_m))
+        return Pose(x=p.x + self._bias[0], y=p.y + self._bias[1], yaw=p.yaw,
+                    vx=p.vx, vy=p.vy, vyaw=p.vyaw)
 
 
 @dataclass
@@ -59,11 +74,15 @@ class SimBatterySensor:
     name: str = "battery"
     obs_field: str = "battery"
     step_pct: float = 0.0         # 量化步长：电量读数只会按 1% / 5% 跳
-    dropout: float = 0.0
+    dropout: float = 0.0          # 整轮失灵概率（粘性，同 SimPoseSensor）
     rng: random.Random = dc_field(default_factory=lambda: random.Random(0))
+    _dead: bool = False
 
     def read(self, entity, world) -> Optional[float]:
+        if self._dead:
+            return None
         if self.dropout > 0 and self.rng.random() < self.dropout:
+            self._dead = True
             return None
         b = float(entity.battery)
         if self.step_pct > 0:

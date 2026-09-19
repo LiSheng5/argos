@@ -32,10 +32,27 @@ from argos.agent.memory_agent import (
     LessonStore,
 )
 from argos.agent.planner import Plan, Planner
-from argos.agent.reflection import Reflector
+from argos.agent.reflection import ROUTE_REASONS, Reflector
 from argos.world.state import from_observation, view
 
 __all__ = ["TraceStep", "RunResult", "AgentBrain"]
+
+
+def _is_route_reason(reason) -> bool:
+    """这个失败是不是"这条路的问题"？
+
+    只有 `OBSTACLE_BLOCKED` / `PATH_INVALID` 算 —— 与 Procedural 层用**同一份**判据
+    （`reflection.ROUTE_REASONS`），避免两层对"什么算路线失败"各有各的标准。
+    接受 `FailReason` 或它的字符串值（trace 里存的是字符串）。
+    """
+    if reason is None:
+        return False
+    if isinstance(reason, FailReason):
+        return reason in ROUTE_REASONS
+    try:
+        return FailReason(reason) in ROUTE_REASONS
+    except ValueError:
+        return False
 
 
 @dataclass
@@ -122,10 +139,17 @@ class AgentBrain:
             # Episodic 层：**成败都记**（Semantic 层要分母才能算失败率）
             if self.memory is not None and plan is not None:
                 first_bad = next((t for t in trace if not t.ok), None)
+                # ⚠️ `route_ok` 只由**路线相关**的失败决定（OBSTACLE_BLOCKED / PATH_INVALID）。
+                #    定位漂移、超时、执行器故障、缺传感器、电量低 —— 都不是"这条路的问题"，
+                #    却曾经被算成"路线不顺" → 语义层于是把路降权、agent 因为定位漂移改走远路。
+                #    （补覆盖缺口时实测抓到：非路线失败场景里学习臂比无记忆臂多花 2 个动作，
+                #     失败数却完全一样 —— 那不是学得准，是**学错了对象**。）
+                route_bad = any(
+                    not t.ok and _is_route_reason(t.reason) for t in trace)
                 self.memory.record_episode(EpisodeEvent(
                     episode=self.reflector.episode_index, goal=goal,
                     route=(trace[0].route if trace and trace[0].route else plan.route),
-                    route_ok=(failures == 0), episode_ok=ok, failures=failures,
+                    route_ok=not route_bad, episode_ok=ok, failures=failures,
                     reason=(first_bad.reason if first_bad else None),
                     detail=(first_bad.detail if first_bad else ""),
                     sim_time=self._view().sim_time,

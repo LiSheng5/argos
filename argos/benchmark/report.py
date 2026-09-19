@@ -15,8 +15,9 @@ __all__ = ["render_markdown"]
 LIMITS = """
 ## 已知限制与负结果（照实写）
 
-1. **场景是"少量原型 × 参数化变体"**，不是 20 个手写任务。障碍位置 / 路线偏好 / 延迟剖面
-   三个维度各取几档参数化生成 —— 好处是可复现、好扩展，坏处是**覆盖的真实性有限**。
+1. **场景是"少量原型 × 参数化变体"**，不是几十个手写任务。障碍位置 / 路线偏好 / 延迟剖面 /
+   **失败类型 / 感知配置**都是参数化出来的变体 —— 别把它读成"几十个独立场景"。
+   每个维度各取几档参数化生成 —— 好处是可复现、好扩展，坏处是**覆盖的真实性有限**。
 2. **移动模型是直线段 + 矩形障碍采样**（步长 0.05m），不是真实运动学。够用于研究
    planning / memory / reflection，**不能当物理结论**。
 3. **反思只从"路线相关"失败里学**（`OBSTACLE_BLOCKED` / `PATH_INVALID`）。
@@ -25,6 +26,12 @@ LIMITS = """
 4. **阈值（min_hits=2 / confidence≥0.6）是拍的**，但**已经扫过参**（见 `文档/SWEEP.md`）：
    单变量扫描显示它们在本场景集里**不敏感**（成功率极差 ≤0.5 个百分点）→
    "拍的值"这一风险基本解除；但**不等于"调好了"**（换场景要重扫，且未做交互扫描）。
+6. **感知场景默认"整轮失灵 + 不重试"**：定位失灵会让闸门 fail-closed 拒动且本轮直接结束，
+   所以感知失灵场景的成功率**主要反映的是这条策略**，而不是"感知本身的好坏"。
+   （定位噪声是整轮固定的标定偏差、失灵是粘性的 —— 不这么做的话，
+   "缺不缺数据"会变成"读了几次"的偶然函数。）
+7. **失败类型的覆盖仍不均匀**：障碍阻挡类场景最多，其余八类各只有 1~2 个场景。
+
 5. **复核周期 `revalidate_every=2` 同样是拍的**，而且只在「连撞两次后恢复」这一个场景族里
    验证过；换周期会不会更好、换别的失败模式还灵不灵，都没扫过。
 6. **反证削弱是粗糙规则**（`hits -= 1`）：试探成功一次就降一级，没有考虑
@@ -178,6 +185,70 @@ def _conclusions(table, results, order) -> str:
             out.append("- ⚠️ **复核不是免费的**：" + "；".join(parts) +
                        "。预算是紧的时候，试探本身要花掉预算 —— 所以「要不要开复核」"
                        "取决于预算宽紧，不能一概而论。")
+
+    # (2d) 新补的两类覆盖：**换一种失败原因** 与 **感知不可靠**
+    #      目标是让"学习有效"的结论别只站在"障碍阻挡"这一类失败上。
+    by_kind: Dict[str, Dict[str, List[ScenarioResult]]] = {}
+    for r in results:
+        by_kind.setdefault(r.kind, {}).setdefault(r.config, []).append(r)
+
+    def _avg(kind: str, cfg_name: str, attr: str):
+        rows_ = by_kind.get(kind, {}).get(cfg_name)
+        if not rows_:
+            return None
+        return sum(getattr(x, attr) for x in rows_) / len(rows_)
+
+    if "route_failure" in by_kind:
+        # 与"障碍版"同形的场景族（two_strikes_then_clear），逐臂对比**是否逐位相同**。
+        # ⚠️ 不预设方向：先算，再说。
+        def _fingerprint(rows_, names) -> Dict[str, tuple]:
+            fp = {}
+            for n in names:
+                v = [x for x in rows_ if x.config == n]
+                if v:
+                    fp[n] = (round(sum(x.success_rate for x in v) / len(v), 4),
+                             round(sum(x.avg_failures for x in v) / len(v), 4),
+                             round(sum(x.avg_steps for x in v) / len(v), 4))
+            return fp
+
+        pi = _fingerprint([r for r in results if r.kind == "route_failure"], order)
+        tw = _fingerprint([r for r in results if r.scenario.startswith("two_strikes_then_clear")],
+                          order)
+        if pi and tw:
+            identical = pi == tw
+            out.append(
+                "- ✅ **结论对「失败原因」不敏感（只要它属于路线类）**：与障碍版同形的场景族"
+                f"（`two_strikes_then_clear`）换成 `path_invalid` 注入后，六个臂的"
+                f"（成功率 / 失败数 / 动作数）"
+                + ("**逐位相同**" if identical else "**不完全相同**（见 §2 明细）")
+                + "。机制上说得通：反思只看**失败属于哪一类**（路线相关 / 不相关），"
+                "不看具体是障碍还是路径失效 —— 所以结论可以从「障碍阻挡」推广到整个路线类，"
+                "但推广不到别的类（见下一条）。")
+
+    if "nonroute_failure" in by_kind:
+        diff = None
+        po, mr = by_kind["nonroute_failure"].get("planner_only"), \
+                 by_kind["nonroute_failure"].get("memory_reflection")
+        if po and mr:
+            diff = abs(sum(x.avg_steps for x in mr) / len(mr)
+                       - sum(x.avg_steps for x in po) / len(po))
+        if diff is not None:
+            out.append(
+                "- ✅ **非路线类失败：学习不起作用，而且这是对的**（定位漂移 / 超时 / 执行器故障 / "
+                f"模拟器延迟 / 缺传感器 / 电量低 六个场景）：学习臂与无记忆臂**动作数差 {diff:.2f}**。"
+                "这些失败不是「这条路的问题」，反思若去改路线就是**学错对象**。"
+                "（补覆盖时这里曾抓到真缺陷：语义层把非路线失败算在路线头上 → 差 2.00 个动作，已修。）")
+
+    if "perception" in by_kind:
+        dn = _avg("perception", "memory_reflection", "success_rate")
+        nd = _avg("perception", "memory_reflection", "avg_steps")
+        if dn is not None:
+            out.append(
+                f"- ⚠️ **感知不可靠的代价（首次量化）**：三个感知场景下学习臂成功率 {dn * 100:.0f}%、"
+                f"平均动作 {nd:.2f}。定位**失灵**会让闸门 fail-closed 拒动、且**当前不重试** → "
+                "整轮报废（一次抖动 = 一轮白跑）；而定位**噪声**（整轮固定偏差）与"
+                "**探测半径受限**（看不见障碍但照样被挡）都不影响结论："
+                "后者正是「只能撞了才知道」——agent 撞完那次就学会了绕开。")
 
     # (3) 成功率能否区分
     rates = {table[k]["success_rate"] for k in order}

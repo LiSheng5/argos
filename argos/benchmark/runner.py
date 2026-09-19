@@ -106,12 +106,17 @@ def run_scenario(scenario: Scenario, cfg: AgentConfig, seed: int) -> ScenarioRes
         world = scenario.world()
         injector = FailureInjector(rng=random.Random(seed * 1000 + i))
         if i in scenario.transient_episodes:
-            injector.arm(FailReason.OBSTACLE_BLOCKED, once=True,
+            # 注入**哪一类**失败由场景决定（默认障碍阻挡）；绑位置的语义不变：
+            # 故障属于世界里的某个位置，不属于"agent 当时选的那条路"。
+            injector.arm(scenario.failure, once=True,
                          where=_WHERE.get(scenario.transient_where))
         latency = get_profile(scenario.latency) if scenario.latency else None
         entity = MiniEntity(world, battery=scenario.start_battery)
+        # 感知层：场景没写 sensors 就不装（与历史基线逐字一致）
+        # 每轮换一条随机流：否则每轮都掷出同一结果，感知场景就失去意义（好的一轮/坏的一轮分不开）
+        sensors = scenario.sensors.build(seed * 100 + i) if scenario.sensors else None
         backend = SimulatorBackend(world=world, entity=entity, injector=injector,
-                                   latency=latency, seed=seed)
+                                   latency=latency, seed=seed, sensors=sensors)
         planner = Planner(world)
         brain = AgentBrain(backend, planner, reflector, max_retry=2,
                            max_steps=scenario.max_steps,

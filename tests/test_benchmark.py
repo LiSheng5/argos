@@ -7,6 +7,7 @@
 """
 import pytest
 
+from argos.agent.interfaces import FailReason
 from argos.benchmark.configs import CONFIGS, config_by_name, make_agent_parts, make_memory
 from argos.benchmark.report import render_markdown
 from argos.benchmark.runner import run_matrix, run_scenario
@@ -36,6 +37,87 @@ def test_unknown_scenario_raises():
 
 
 # ---------- 配置 ----------
+
+def test_scenario_library_covers_every_injectable_failure_kind():
+    """**覆盖守卫**：9 类可注入失败，每一类都要有场景跑到。
+
+    这条是 2026-09-19 补的 —— 当时实测发现 benchmark 全矩阵**只用了障碍阻挡 1 类**，
+    于是"反思有效"的结论其实只站在一类失败上。`network_delay` 不走注入器，
+    而是由丢包延迟剖面产生，所以单列处理。
+    """
+    from argos.sim.failure_injector import INJECTABLE
+
+    scenarios = build_scenarios()
+    injected = {s.failure for s in scenarios}
+    latency_names = {s.latency for s in scenarios if s.latency}
+    NETWORK_DELAY_VIA_LATENCY = {"packet_loss"}      # 丢包剖面 → NETWORK_DELAY
+
+    uncovered = []
+    for kind in INJECTABLE:
+        if kind in injected:
+            continue
+        if kind is FailReason.NETWORK_DELAY and latency_names & NETWORK_DELAY_VIA_LATENCY:
+            continue
+        uncovered.append(kind.value)
+    assert not uncovered, f"这些失败类型没有任何场景覆盖：{uncovered}"
+    assert len(injected) >= 8, "直接注入的类型数偏少"
+
+
+def test_sensor_scenarios_declare_specs():
+    """**覆盖守卫**：感知层要有场景真的用上（此前它从未进过 benchmark）。"""
+    with_sensors = [s for s in build_scenarios() if s.sensors is not None]
+    assert len(with_sensors) >= 3
+    assert any(s.sensors.pose_dropout > 0 for s in with_sensors)     # 失灵
+    assert any(s.sensors.pose_noise > 0 for s in with_sensors)       # 噪声
+    assert any(s.sensors.obstacle_radius < 5.0 for s in with_sensors)  # 探测半径受限
+
+
+def test_runner_actually_applies_sensors_and_failure_kind():
+    """场景声明的东西必须真的接到 backend 上（否则声明只是装饰）。"""
+    sc = by_name("sensor_pose_dropout")
+    r = run_scenario(sc, config_by_name("planner_only"), 42)
+    # 15% 整轮失灵 + 闸门 fail-closed 且不重试 → 至少有一轮报废
+    assert any(not e.ok for e in r.episodes), "装了传感器却没影响到任何一轮，接线大概是断的"
+    assert r.success_rate < 1.0
+
+    sc2 = by_name("nonroute_failure_action_timeout")
+    cfg = config_by_name("planner_only")
+    r2 = run_scenario(sc2, cfg, 42)
+    reasons = set()
+    for e in r2.episodes:
+        reasons.add(e.ok)
+    assert any(e.failures > 0 for e in r2.episodes), "注入的失败没生效"
+
+
+def test_nonroute_failures_teach_nothing_about_routes():
+    """**负对照**：非路线类失败（定位漂移等）不该让任何一层去改路线。
+
+    这是补覆盖时抓到真缺陷的地方 —— 当时语义层把"定位漂移"算成"这条路不顺"，
+    学习臂于是比无记忆臂**多花 2 个动作**改走远路（失败数却一样，说明学错了对象）。
+    修法见 `brain._is_route_reason`：`route_ok` 只由路线相关失败决定。
+    """
+    for name in ("nonroute_failure_localization_error", "nonroute_failure_action_timeout"):
+        sc = by_name(name)
+        base = run_scenario(sc, config_by_name("planner_only"), 42)
+        for cfg_name in ("memory_only", "semantic_only", "memory_reflection"):
+            r = run_scenario(sc, config_by_name(cfg_name), 42)
+            assert r.avg_steps == base.avg_steps, \
+                f"{name} × {cfg_name}：学习臂改变了路线选择，说明非路线失败被算到路线上了"
+            assert r.avg_failures == base.avg_failures
+
+
+def test_route_ok_only_counts_route_reasons():
+    """单元钉：`_is_route_reason` 的判据与 Procedural 层同源。"""
+    from argos.agent.brain import _is_route_reason
+    assert _is_route_reason(FailReason.OBSTACLE_BLOCKED) is True
+    assert _is_route_reason(FailReason.PATH_INVALID) is True
+    assert _is_route_reason(FailReason.LOCALIZATION_ERROR) is False
+    assert _is_route_reason(FailReason.BATTERY_LOW) is False
+    assert _is_route_reason(FailReason.SAFETY_REJECTED) is False
+    assert _is_route_reason("obstacle_blocked") is True      # trace 里存的是字符串
+    assert _is_route_reason("这不是个失败原因") is False      # 认不出 → 不算路线问题
+    assert _is_route_reason(None) is False
+
 
 def test_arms_include_negative_and_special_purpose_ones():
     """六臂 = 指令要的四组对比 + 复核臂 + 语义软降权臂。"""
