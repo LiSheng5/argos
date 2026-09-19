@@ -62,7 +62,7 @@ python -m pytest tests -q -p no:cacheprovider
 # 与 Console 相关的三个文件：test_web_console.py（10）旧端点不回归 / Run 全链路 /
 # 急停过闸 / 坏图拒绝 / WS 快照 / 缺传感器=null；test_tick_health.py（11）健康门四态 + 接线钉；
 # test_estop_and_tick.py（6）急停到达执行器 / tick 不阻塞事件循环。
-# ⚠️ 总数不写在这里 —— 测试基线唯一权威源是 文档/小结_20260829.md §1（写死会过期）。
+# ⚠️ 总数不写在这里 —— 测试基线唯一权威源是 文档/测试基线.md（写死会过期）。
 ```
 
 ## 六、数据从哪来（能拿到 / 拿不到）

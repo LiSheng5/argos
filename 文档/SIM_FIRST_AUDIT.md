@@ -19,7 +19,7 @@
 
 | 维度 | 结论 |
 |---|---|
-| 能否不买机器人跑通 | ✅ 大脑层可以（审计当时裸环境 **168 passed + 3 skipped**；现基线见 小结 §1） |
+| 能否不买机器人跑通 | ✅ 大脑层可以（审计当时裸环境 **168 passed + 3 skipped**；现基线见 `文档/测试基线.md`） |
 | 能否不装宇树上游跑通 | ⚠️ 物理/DDS 3 例会跳过（`importorskip("unitree_sdk2py")`），需按 `requirements.txt:35-42` clone 两个上游 |
 | 是否存在 Planner | ❌ 不存在 |
 | 是否存在 WorldState | ❌ 不存在（状态散在 4 处） |
@@ -168,5 +168,5 @@ sensor_missing / simulator_delay / network_delay / executor_failure` —— **�
 ---
 
 *本文件所有结论可复现：`pytest tests -q -p no:cacheprovider`（审计当时裸环境 168 passed + 3 skipped；
-现基线见 `文档/小结_20260829.md` §1 —— 本文件是 Phase 0 的**审计快照**，数字不随代码更新）；
+现基线见 `文档/测试基线.md` —— 本文件是 Phase 0 的**审计快照**，数字不随代码更新）；
 代码结论按 `文件:行号` 可逐条核对。*
