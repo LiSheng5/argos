@@ -6,6 +6,7 @@
   3. executor 卡死时读接口不永久挂起，返回诚实的断连骨架（HTTP 仍 200）。
 """
 import asyncio
+import threading
 import time
 
 from fastapi.testclient import TestClient
@@ -103,11 +104,28 @@ def test_read_endpoint_degrades_when_executor_hangs(tmp_path, monkeypatch):
 
 
 def test_read_or_times_out_without_waiting(monkeypatch):
-    """钉超时本身：`_read_or` 不等慢读完成就返回降级值。"""
+    """钉超时本身：`_read_or` **不等慢读跑完**就返回降级值。
+
+    ⚠️ 2026-09-19 换成"钉事实"，不再靠墙钟判断"有没有等"。
+    原来断言 `elapsed < 0.9`（界在 0.2s 超时与 1.5s 慢读之间，看着合理），
+    但**共享机器上一忙就翻车** —— 实测：空载重复 20 次全过、CPU 满载时 15/15 全红。
+    它会在验证其他改动时制造假红（我自己就被坑过一次：刚跑完 benchmark 就见到它红）。
+
+    改成直接断言"慢读还没完成"这个**事实**（比原断言更强：原来"等了 0.85s 再返回"
+    也能过，现在过不了）；墙钟只留一个宽到不会误判的上界（< 1.4s，仍严格低于 1.5s 的慢读）。
+
+    ⚠️ **但没修掉负载敏感性**：CPU 被打满时本测试**仍然必定红**（实测 8 线程满载 → 15/15 红），
+    因为饱和负载下事件循环拿不到 CPU，"0.2s 超时及时返回"这个**性质本身**就不成立 ——
+    换任何断言都救不回来。所以它和 DDS 三例归为一类：
+    **对机器负载敏感，别在高负载时跑，或者跑之前先让机器空下来。**
+    反向验证过：把超时放大到 5s（= 真的干等）时，本断言会红 → 钉子本身是有效的。
+    """
     monkeypatch.setenv("ARGOS_READ_TIMEOUT", "0.2")
+    finished = threading.Event()
 
     def slow():
         time.sleep(1.5)
+        finished.set()
         return "live"
 
     async def scenario():
@@ -115,11 +133,12 @@ def test_read_or_times_out_without_waiting(monkeypatch):
         （等 slow 跑完），在外面量会把 0.2s 的超时错测成 1.5s。"""
         t0 = time.time()
         got = await _read_or(slow, lambda: "fallback")
-        return got, time.time() - t0
+        return got, time.time() - t0, finished.is_set()
 
-    got, elapsed = asyncio.run(scenario())
+    got, elapsed, slow_finished = asyncio.run(scenario())
     assert got == "fallback"
-    assert elapsed < 0.9
+    assert not slow_finished, "慢读都跑完了才返回 —— 超时没生效（真的在干等）"
+    assert elapsed < 1.4
 
 
 def test_telemetry_endpoint_degrades_to_nulls(tmp_path, monkeypatch):
