@@ -17,12 +17,16 @@
    ⚠️ 但滑窗**不能替代复核**：不去尝试就不会产生新观测，窗口永远停在旧数据上 ——
    所以 `revalidate_every`（主动试探）与滑窗是互补的，不是二选一。
 
-本层是纯内存的（进程内），无 I/O、无随机 —— 同 seed 可复现。
+本层**只按需落盘**（D-03a，见 `LessonStore.save/load`）：默认纯内存、无随机 —— 同 seed 可复现；
+一旦给了 `--lessons <path>`，程序性教训（Procedural）会在启动时载入、每个 episode 后写回，
+进程结束后不再丢失。**Episodic / Semantic 仍然只在内存里**（这一版只持久化 Lesson）。
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import json
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from argos.agent.interfaces import FailReason, Lesson
@@ -96,9 +100,101 @@ class RouteStats:
                 f"（失败率 {self.failure_rate:.2f}）")
 
 
+class LessonStoreError(ValueError):
+    """教训库读不出来（坏 JSON / 结构不对 / 缺字段）。
+
+    **刻意继承 ValueError**（调用方给了坏输入）；单独一个类型是为了让 CLI 能精确捕获 ——
+    只兜教训库的问题，不吞别处冒出来的 ValueError。
+    """
+
+
 @dataclass
 class LessonStore:
     lessons: Dict[str, Lesson] = field(default_factory=dict)
+
+    # ---- 持久化（D-03a）----
+    def save(self, path: str | Path) -> None:
+        """把程序性教训写成 JSON（**完整保留审计信息**）。
+
+        保留字段：`status` / `history` / `confidence` / `hits` /
+        `created_episode` / `updated_episode` —— 失效条目（`invalidated`）**照样写出去**，
+        否则"这条教训当初怎么来的、又被什么推翻的"就随进程一起丢了。
+
+        写法是**先写临时文件、再原子替换**：逐 episode 落盘时进程若被打断，
+        也不会留下半截 JSON 把整个教训库废掉。
+        """
+        p = Path(path)
+        if p.parent != Path(""):
+            p.parent.mkdir(parents=True, exist_ok=True)
+        payload = [
+            {
+                "id": l.id,
+                "trigger": l.trigger,
+                "avoid": l.avoid,
+                "prefer": l.prefer,
+                "evidence": l.evidence,
+                "confidence": l.confidence,
+                "hits": l.hits,
+                "scope": l.scope,
+                "status": l.status,
+                "history": list(l.history),
+                "created_episode": l.created_episode,
+                "updated_episode": l.updated_episode,
+            }
+            for l in self.lessons.values()
+        ]
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(p)
+
+    @classmethod
+    def load(cls, path: str | Path) -> "LessonStore":
+        """从 JSON 恢复教训。
+
+        三条明确语义（**全都不静默**）：
+
+        * 文件不存在 → 返回**空库**（首次运行是正常情况，不是错误）；
+        * JSON 坏 / 顶层不是数组 / 条目不是对象 / 缺必填字段 → 抛 `LessonStoreError`，
+          **绝不静默当成空库** —— "其实一条都没学到"和"文件被写坏了"必须能区分开；
+        * **只读不改**：load 不写回、不删除、不清空原文件。
+        """
+        p = Path(path)
+        store = cls()
+        if not p.exists():
+            return store
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise LessonStoreError(f"无法读取教训库：{p}（{exc}）") from exc
+        if not isinstance(raw, list):
+            raise LessonStoreError(f"教训库格式错误：{p} 顶层应为 JSON 数组")
+        for i, item in enumerate(raw):
+            if not isinstance(item, dict):
+                raise LessonStoreError(f"教训库格式错误：{p} 第 {i} 个条目不是对象")
+            required = {"id", "trigger", "avoid", "prefer"}
+            if not required.issubset(item):
+                missing = "、".join(sorted(required - set(item)))
+                raise LessonStoreError(f"教训库格式错误：{p} 第 {i} 个条目缺字段 {missing}")
+            try:
+                lesson = Lesson(
+                    id=str(item["id"]),
+                    trigger=str(item["trigger"]),
+                    avoid=str(item["avoid"]),
+                    prefer=str(item["prefer"]),
+                    evidence=str(item.get("evidence", "")),
+                    confidence=float(item.get("confidence", 0.0)),
+                    hits=int(item.get("hits", 1)),
+                    scope=str(item.get("scope", "")),
+                    status=str(item.get("status", "active")),
+                    history=tuple(str(x) for x in item.get("history", ())),
+                    created_episode=int(item.get("created_episode", 0)),
+                    updated_episode=int(item.get("updated_episode", 0)),
+                )
+            except (TypeError, ValueError) as exc:
+                raise LessonStoreError(
+                    f"教训库格式错误：{p} 第 {i} 个条目字段类型不对（{exc}）") from exc
+            store.lessons[lesson.id] = lesson
+        return store
 
     def add(self, lesson: Lesson, episode: int = 0) -> Lesson:
         """同一条经验重复出现 → hits 累加、confidence 提高（不重复建条目）。

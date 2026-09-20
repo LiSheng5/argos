@@ -7,7 +7,10 @@
      不是一段话；
   2. **必须有证据**（evidence 来自真实 ActionResult 的 detail），不许编造；
   3. **必须达到阈值才生效**（min_hits + min_confidence），
-     防"一次偶发就永久绕行" —— 这会让 agent 变得胆小且不可信。
+     防"一次偶发就永久绕行" —— 这会让 agent 变得胆小且不可信；
+  4. **教训必须能被证伪，但也要防"被一次偶然证伪"**：走通了被避开的路线会削弱教训，
+     但要求**连续两次**成功复核（`record_success`，D-02）—— 与第 3 条是同一条纪律的两端：
+     门槛进、门槛出，都别被单次观测牵着走。
 
 被闸拒（SAFETY_REJECTED / INVALID_PARAMS）**不算世界给的经验**，不产生 Lesson。
 """
@@ -25,6 +28,10 @@ __all__ = ["Reflector", "ROUTE_REASONS"]
 #: 反例：低电量（BATTERY_LOW）时路线没问题，学成"北线不能走"就是**错误因果**
 #: —— 这是本轮 benchmark 实测暴露出来的限制，见 `文档/BENCHMARK.md`。
 ROUTE_REASONS = frozenset({FailReason.OBSTACLE_BLOCKED, FailReason.PATH_INVALID})
+
+#: 反证一条教训需要**连续**成功复核几次（D-02）。
+#: 取 2：一次成功可能是偶然（噪声/瞬时抖动），能**复现**的成功才配推翻已积累的教训。
+_REQUIRED_PROBE_SUCCESSES = 2
 
 
 @dataclass
@@ -44,6 +51,9 @@ class Reflector:
     _evidence: Dict[Tuple[str, str], List[str]] = field(default_factory=dict)
     _episodes: int = 0
     _seen_this_episode: Dict[str, bool] = field(default_factory=dict)
+    #: route → **连续**成功复核的次数。一次成功不再立刻推翻教训（D-02）：
+    #: "偶然走通一次"和"环境真的恢复了"要区分开 —— 后者应当能稳定复现。
+    _probe_successes: Dict[str, int] = field(default_factory=dict)
 
     # ---- episode 边界（证据独立性的关键）----
     def begin_episode(self) -> None:
@@ -65,14 +75,30 @@ class Reflector:
         return (self.revalidate_every > 0 and self._episodes > 0
                 and self._episodes % self.revalidate_every == 0)
 
+    def probe_streak(self, route: str) -> int:
+        """该路线当前已累计的**连续成功复核**次数（public 出口，别在外面读 `_probe_successes`）。"""
+        return self._probe_successes.get(route, 0)
+
     def record_success(self, trigger: str, detail: str = "") -> Optional[Lesson]:
         """走通了某条**曾被避开**的路线 → 反证 → 削弱对应教训。
 
-        同时**清空该路线的失败证据计数**：反证成立之后，要把教训重新激活
+        **连续两次**成功复核才算反证成立（D-02）。只成功一次不算：
+        一次成功既可能是"环境真恢复了"，也可能只是**偶然走通**（噪声、瞬时抖动）。
+        要求可复现，才配得上"推翻一条已经积累到 min_hits 的教训"。
+
+        反证成立之后才**清空该路线的失败证据计数**：教训重新激活
         必须重新积累 `min_hits` 次独立失败 —— 否则"刚被推翻的教训被一次偶发立刻复活"，
         等于没治。
+
+        返回：真正削弱了教训时返回新的 Lesson；只是累计到第 1 次成功时返回 None
+        （调用方据此判断"还没到能清 Semantic 滑窗的时候"，见 `brain.AgentBrain.finish`）。
         """
         route = trigger.split(":", 1)[-1]
+        self._probe_successes[route] = self._probe_successes.get(route, 0) + 1
+        if self._probe_successes[route] < _REQUIRED_PROBE_SUCCESSES:
+            return None
+
+        self._probe_successes.pop(route, None)
         out = self.store.weaken(route, episode=self._episodes)
         for key in [k for k in self._counts if k[0] == trigger]:
             self._counts.pop(key, None)
@@ -97,6 +123,10 @@ class Reflector:
         self._seen_this_episode[dedup] = True
 
         key = (trigger, reason.value)
+        # 路线再次失败 → 先前的"连续成功"断链，必须重新数两次（D-02）。
+        # 注意这里只对**路线相关**失败生效：上面已提前 return，低电量/定位漂移不会误清。
+        route = trigger.split(":", 1)[-1]
+        self._probe_successes.pop(route, None)
         self._counts[key] = self._counts.get(key, 0) + 1
         self._evidence.setdefault(key, []).append(detail or reason.value)
         return self._counts[key]

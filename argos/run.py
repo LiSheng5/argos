@@ -2,6 +2,7 @@
 
     python -m argos.run --list-backends
     python -m argos.run --backend simulator --goal "去充电站" --episodes 3
+    python -m argos.run --backend simulator --lessons 待办/lessons.json   # 教训落盘
     python -m argos.run --backend go2        # ← 会**如实报未实现**，不伪造
 
 设计要点
@@ -10,6 +11,8 @@
   —— 这就是"换身体不改大脑"的落点（验收项 §25-9「可替换」）。
 * `go2` 之类**没有实现的 backend 必须明确报错**。本项目当前没有真机，
   绝不写一个假的 real executor 来"看起来完成"（指令 §18 / §28）。
+* `--lessons PATH` 只负责**程序性教训**的载入/落盘（episodic / semantic 仍在内存里）。
+  文件坏了**明确报错退出**，不静默清空。
 """
 from __future__ import annotations
 
@@ -21,7 +24,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from argos.agent.brain import AgentBrain
-from argos.agent.memory_agent import LessonStore
+from argos.agent.memory_agent import LessonStore, LessonStoreError
 from argos.agent.planner import Planner
 from argos.agent.reflection import Reflector
 from argos.world.mini_world import build_default_world
@@ -92,12 +95,20 @@ def resolve_goal(utterance: str, input_name: str = "text", planner=None) -> Opti
 
 def run(goal: str = DEFAULT_GOAL, backend: str = "simulator", seed: int = 42,
         episodes: int = 3, revalidate_every: int = 0,
-        trace_path: Optional[str] = None, verbose: bool = True):
+        trace_path: Optional[str] = None, verbose: bool = True,
+        lessons_path: Optional[str] = None):
     """跑完整闭环：Goal → … → Memory → Replan，跨 episode 共享记忆。
+
+    `lessons_path`（D-03a）：给了就把**程序性教训**落盘 ——
+    启动时从这里载入（缺文件 = 空库），每个 episode 结束写回一次。
+    不传则与从前逐字一致：纯内存、跑完即弃。
 
     返回 `(episodes_trace, lessons)`，便于测试直接断言而不靠打印。
     """
-    store = LessonStore()
+    store = LessonStore.load(lessons_path) if lessons_path else LessonStore()
+    if verbose and lessons_path:
+        print(f"教训库：{lessons_path}"
+              + (f"（载入 {len(store.all())} 条）" if store.all() else "（新建）"))
     reflector = Reflector(store=store, alternatives=dict(DEFAULT_ALTERNATIVES),
                           revalidate_every=revalidate_every)
     out: List[dict] = []
@@ -131,6 +142,10 @@ def run(goal: str = DEFAULT_GOAL, backend: str = "simulator", seed: int = 42,
             print(f"  episode {i}: 起步 {out[-1]['route'] or '-'} → {flag} "
                   f"动作 {r.steps}，失败 {r.failures}，重规划 {r.replans}{extra}")
 
+        # 每个 episode 结束就落盘：中途被打断也留得住已经学到的东西
+        if lessons_path:
+            store.save(lessons_path)
+
     if trace_path:
         p = Path(trace_path)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -162,6 +177,8 @@ def main(argv=None) -> int:
     p.add_argument("--revalidate-every", type=int, default=0,
                    help="每隔几个 episode 复核一次被避开的路线（0=不复核）")
     p.add_argument("--trace", default="", help="把逐步 trace 写成 JSON")
+    p.add_argument("--lessons", default="",
+                   help="程序性教训 JSON 的路径：启动时载入（缺文件=空库），每个 episode 后保存")
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args(argv)
 
@@ -190,9 +207,15 @@ def main(argv=None) -> int:
         eps, lessons = run(goal=goal, backend=args.backend, seed=args.seed,
                            episodes=args.episodes,
                            revalidate_every=args.revalidate_every,
-                           trace_path=args.trace or None, verbose=verbose)
+                           trace_path=args.trace or None, verbose=verbose,
+                           lessons_path=args.lessons or None)
     except KeyError as e:
         print(f"错误：{e.args[0] if e.args else e}", file=sys.stderr)
+        return 2
+    except LessonStoreError as e:
+        # 教训库坏了就**明确报错退出**，绝不静默当成"还没学到东西"
+        print(f"错误：{e}\n  教训库文件不会被改动 —— 修好它，或换一个路径（或删掉重建）。",
+              file=sys.stderr)
         return 2
 
     if verbose:
@@ -200,7 +223,7 @@ def main(argv=None) -> int:
         print(f"完成：{ok}/{len(eps)} 个 episode 成功；累计教训 {len(lessons)} 条")
         for l in lessons:
             print(f"  · 避开 {l.avoid}，改用 {l.prefer}"
-                  f"（置信度 {l.confidence:.2f}，证据数 {l.hits}）")
+                  f"（置信度 {l.confidence:.2f}，证据数 {l.hits}，状态 {l.status}）")
     return 0 if all(e["ok"] for e in eps) else 1
 
 

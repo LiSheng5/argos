@@ -139,6 +139,9 @@ def build_scenarios() -> Tuple[Scenario, ...]:
     # --- B2. 连撞两次后恢复（**治过度泛化的靶场景** = 2）---
     #     北线在 ep0、ep1 各失败一次 → 达到 min_hits=2 → 会生成"避开北线"的教训；
     #     但 ep2 起北线已经通了。没有复核机制的 agent 会从此永久绕远路。
+    #     ⚠️ 时域 = 6（原来 5）：D-02 之后"真正削弱教训"要求**连续两次探针成功**，
+    #        而每 2 轮才探一次（`revalidate_every=2`）→ 需要 2 次探针才撤得掉教训，
+    #        5 轮里只够探一次。时域加一格才量得到"恢复"，否则测的是半途状态。
     for lat in (None, "normal"):
         out.append(Scenario(
             name=f"two_strikes_then_clear_{lat or 'none'}",
@@ -149,7 +152,7 @@ def build_scenarios() -> Tuple[Scenario, ...]:
             obstacles=(),
             latency=lat,
             transient_episodes=(0, 1),
-            episodes=5,
+            episodes=6,
         ))
 
     # --- B3. 预算是紧的：现场换路救不回来，只有"学过"的才活得下来（= 2）---
@@ -217,6 +220,8 @@ def build_scenarios() -> Tuple[Scenario, ...]:
     #     与 two_strikes_then_clear 同形，只把注入类型从「障碍阻挡」换成「路径失效」。
     #     PATH_INVALID 与 OBSTACLE_BLOCKED 同属"路线相关"失败 → **学习应当照样有用**。
     #     这一族的作用：把"反思有效"的结论从 1 类失败扩到第 2 类。
+    #     ⚠️ 时域、路线、故障注入必须与 B2 族**逐项一致**（同为 6 轮），
+    #        否则"两族数字逐位相同"这条结论就没法比 —— 变的只能是 `failure` 一项。
     for lat in (None, "normal"):
         out.append(Scenario(
             name=f"two_strikes_path_invalid_{lat or 'none'}",
@@ -228,7 +233,7 @@ def build_scenarios() -> Tuple[Scenario, ...]:
             latency=lat,
             failure=FailReason.PATH_INVALID,
             transient_episodes=(0, 1),
-            episodes=5,
+            episodes=6,
         ))
 
     # --- H. **非路线类**失败（负对照）：学习**不该**起作用（= 6）---

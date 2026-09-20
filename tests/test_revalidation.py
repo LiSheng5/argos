@@ -134,11 +134,104 @@ def test_weaken_unknown_route_is_noop():
 
 
 def test_record_success_weakens_by_route_name():
+    """反证要**连续两次**成功复核（D-02）—— 一次成功只是累计证据，不动教训。"""
     r = Reflector(store=LessonStore())
     r.store.add(Lesson(id="l", trigger="route:north", avoid="north", prefer="south",
                        evidence="e", confidence=0.67, hits=2))
+    # 第 1 次成功：只记账，不削弱
+    assert r.record_success("route:north") is None
+    assert r.store.get("l").hits == 2
+    assert r.store.get("l").status == "active"
+    assert r.probe_streak("north") == 1
+    # 第 2 次连续成功：才真的降级
     assert r.record_success("route:north") is not None
     assert r.store.get("l").hits == 1
+    assert r.probe_streak("north") == 0          # 用掉之后清零，下次要重新数两次
+
+
+def test_probe_success_streak_resets_after_route_failure():
+    """中途该路线又失败 → 连续成功计数清零，必须重新连续两次。"""
+    r = Reflector(store=LessonStore(), min_hits=2,
+                  alternatives={"north": "south"})
+    r.store.add(Lesson(id="l", trigger="route:north", avoid="north", prefer="south",
+                       evidence="e", confidence=0.67, hits=2))
+    assert r.record_success("route:north") is None
+    assert r.record_failure(trigger="route:north",
+                            reason=FailReason.OBSTACLE_BLOCKED) == 1
+    assert r.probe_streak("north") == 0
+    assert r.store.get("l").hits == 2            # 教训没被削弱
+    # 一次新的成功不足以推翻；必须重新连续两次成功。
+    assert r.record_success("route:north") is None
+    assert r.record_success("route:north") is not None
+    assert r.store.get("l").hits == 1
+
+
+def test_non_route_failure_does_not_reset_probe_streak():
+    """非路线类失败（低电量/定位漂移…）不该断掉"这条路通了"的连续成功计数。"""
+    r = Reflector(store=LessonStore(), min_hits=2)
+    r.store.add(Lesson(id="l", trigger="route:north", avoid="north", prefer="south",
+                       evidence="e", confidence=0.67, hits=2))
+    assert r.record_success("route:north") is None
+    assert r.record_failure(trigger="route:north", reason=FailReason.BATTERY_LOW) == 0
+    assert r.probe_streak("north") == 1
+    assert r.record_success("route:north") is not None
+
+
+def _open_world():
+    """默认世界的路线拓扑，但**把障碍拿掉** —— 北线是通的。
+
+    直接用 `SimulatorBackend(seed=42)` 会带上默认世界里的 `north_block`
+    （那是 demo 的失败源），于是"探针成功"根本构造不出来。
+    """
+    from argos.world.mini_world import MiniWorld, build_default_world
+    base = build_default_world()
+    return MiniWorld(name="probe_open", rooms=base.rooms, obstacles=(),
+                     locations=base.locations, routes=base.routes, bounds=base.bounds)
+
+
+def _probe_setup(hits: int, revalidate_every: int):
+    """造一个"有教训 + 又有旧滑窗"的局面，用来验探针成功之后的接线。
+
+    返回 `(store, memory, brain)`。滑窗先塞两次失败 → `soft_penalty()` 一定对 north 生效。
+    """
+    from argos.agent.memory_agent import AgentMemory, EpisodeEvent
+    from argos.agent.planner import Planner
+    from argos.backends.simulator_backend import SimulatorBackend
+
+    store = LessonStore()
+    store.add(Lesson(id="l", trigger="route:north", avoid="north", prefer="south",
+                     evidence="e", confidence=0.9, hits=hits), episode=1)
+    memory = AgentMemory(procedural=store)
+    for i in range(2):
+        memory.record_episode(EpisodeEvent(episode=i, goal="g", route="north",
+                                           route_ok=False, episode_ok=False))
+    reflector = Reflector(store=store, revalidate_every=revalidate_every,
+                          alternatives={"north": "south", "south": "north"})
+    be = SimulatorBackend(world=_open_world(), seed=42)
+    return store, memory, AgentBrain(be, Planner(be.world), reflector, memory=memory)
+
+
+def test_first_probe_success_does_not_clear_the_semantic_window():
+    """**D-02 的接线钉**：只有反证成立（教训真被削弱）才允许清该路线的 Semantic 滑窗。
+
+    第一次成功若就把滑窗清了，两层会打架：Procedural 还压着这条路（教训还在），
+    Semantic 却已不再对它降权 —— 下一步 agent 又走回被避开的路。
+    """
+    store, memory, brain = _probe_setup(hits=3, revalidate_every=1)
+    assert memory.soft_penalty() == {"north": 1.0}
+
+    r1 = brain.run("去充电站")
+    assert r1.trace and r1.trace[0].route == "north" and r1.ok and r1.failures == 0
+    # 第 1 次探针成功 → 教训没动，滑窗也没清
+    assert store.get("l").hits == 3
+    assert memory.windows.get("north") is not None
+
+    r2 = brain.run("去充电站")
+    assert r2.trace[0].route == "north" and r2.failures == 0
+    # 第 2 次连续成功 → 教训被削弱（hits 3→2）+ 滑窗被重置
+    assert store.get("l").hits == 2
+    assert memory.windows.get("north") in (None, [True])
+    assert memory.soft_penalty() == {}
 
 
 # ---------- 4. 端到端：复核确实省了动作 ----------
@@ -159,32 +252,34 @@ def test_revalidation_cuts_the_detour_cost_end_to_end():
 
 
 def test_probe_success_clears_the_semantic_window():
-    """受控干预成功 → 该路线的滑窗重置。
+    """反证**成立**之后 → 该路线的滑窗重置，两层不再打架。
 
     不这样做会出现两层打架：Procedural 已被反证撤销，Semantic 的滑窗却还压着这条路，
     结果探针明明验通了、agent 下一步又绕回远路（实测踩到过）。
-    """
-    from argos.agent.memory_agent import AgentMemory, EpisodeEvent
-    from argos.agent.planner import Planner
-    from argos.agent.reflection import Reflector
-    from argos.backends.simulator_backend import SimulatorBackend
 
-    memory = AgentMemory()
-    for i in range(2):
-        memory.record_episode(EpisodeEvent(episode=i, goal="g", route="north",
-                                           route_ok=False, episode_ok=False))
+    ⚠️ 这条测试原先**是空断言**（`if r.trace and r.trace[0].route == "north":`）——
+    而当时默认世界带 `north_block`、软降权又把 south 排到前面，
+    条件恒为假 → 断言根本没跑过。现在换成"无障碍世界 + 每轮探针"，是真在验。
+    """
+    store, memory, brain = _probe_setup(hits=2, revalidate_every=1)
     assert memory.soft_penalty() == {"north": 1.0}
 
-    reflector = Reflector(store=memory.procedural, revalidate_every=2,
-                          alternatives={"north": "south", "south": "north"})
-    be = SimulatorBackend(seed=42)
-    brain = AgentBrain(be, Planner(be.world), reflector, memory=memory)
+    r1 = brain.run("去充电站")
+    assert r1.trace[0].route == "north" and r1.ok and r1.failures == 0
+    assert store.get("l").hits == 2                      # 第 1 次成功不削弱
+    assert memory.windows.get("north") is not None       # 滑窗也不清
 
-    # episode 0 会被判定为"该复核" → 走一次探针（这里世界是通的）
-    r = brain.run("去充电站")
-    if r.trace and r.trace[0].route == "north":
-        assert memory.windows.get("north") in (None, [True])   # 窗口已重置
-        assert memory.soft_penalty() == {}
+    r2 = brain.run("去充电站")
+    assert r2.trace[0].route == "north" and r2.failures == 0
+    # 反证成立：hits 2→1 → confidence 0.5 < 0.6 → 退出「生效中」= 不再硬避开
+    assert store.get("l").status == "active"             # 没被删，只是不再生效
+    assert store.active() == []
+    assert memory.windows.get("north") in (None, [True])  # 滑窗已重置
+    assert memory.soft_penalty() == {}
+
+    # 撤干净之后，下一步自然就走北线（不必再靠探针）
+    r3 = brain.run("去充电站")
+    assert r3.trace[0].route == "north" and r3.ok
 
 
 def test_revalidation_costs_at_most_one_probe_failure():

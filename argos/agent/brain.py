@@ -128,12 +128,16 @@ class AgentBrain:
                    steps: int = 0, failures: int = 0, replans: int = 0) -> RunResult:
             """统一出口：处理"复核成功 → 反证"与"记一条情节记忆"。"""
             if plan is not None and plan.is_probe and ok and failures == 0:
-                # 试探的那条路线**一次都没失败** —— 说明它已经通了，撤销旧教训。
-                self.reflector.record_success(f"route:{plan.route}")
+                # 试探的那条路线**一次都没失败** —— 说明它通了，可以（开始）撤销旧教训。
+                # ⚠️ D-02：单次成功只是**累计证据**（`record_success` 返回 None）；
+                #    要**连续两次**成功复核才真的削弱教训。
+                weakened = self.reflector.record_success(f"route:{plan.route}")
                 # 受控干预的结果**比日常观测更强**（干预式验证的要点）：
                 # 清掉该路线的滑窗，让它从"这次确证的成功"重新起算。
-                # 否则会出现两层打架：Procedural 已撤销，Semantic 还压着这条路不让走。
-                if self.memory is not None:
+                # 但**只有反证真的成立**（教训被削弱）时才清：第一次成功不能让 Semantic
+                # 层也提前把旧证据忘掉，否则两层会打架 —— Procedural 还压着这条路，
+                # Semantic 却被清空、不再对它降权，于是下一步又走回被避开的路。
+                if weakened is not None and self.memory is not None:
                     self.memory.windows.pop(plan.route, None)
 
             # Episodic 层：**成败都记**（Semantic 层要分母才能算失败率）
