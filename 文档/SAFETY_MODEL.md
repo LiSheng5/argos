@@ -1,7 +1,7 @@
 # SAFETY_MODEL —— 安全模型（SIM-first Runtime）
 
 > 本文只描述**新 runtime**（`argos/agent/` + `argos/backends/`）的安全模型。
-> 旧运行时的安全设计见 `文档/架构.md` §7（那份仍在服役，**不在这里重抄**）。
+> 旧运行时的安全设计见 `文档/archive/架构.md` §7（已归档快照，**不在这里重抄**）。
 > 铁律一句话：**LLM 只提议，代码决定执行。**
 
 ---

@@ -73,7 +73,7 @@ User Goal → Brain → Planner → ActionProposal → SafetyGate → Executor
 - ⚠️ **全部是仿真**：不接硬件、不伪造 real executor。真机代码（`real_sport.py` / `dds_entity.py` /
   `sim/mujoco.py`）已冻结，仅作为未来 RobotBackend 的素材保留。
 
-完整审计与缺口清单见 `文档/SIM_FIRST_AUDIT.md`，实验数据见 `文档/BENCHMARK.md`，逐步 trace 见 `文档/demo_trace.md`。
+完整审计与缺口清单见 `文档/archive/SIM_FIRST_AUDIT.md`（历史快照），实验数据见 `文档/BENCHMARK.md`，逐步 trace 见 `文档/demo_trace.md`。
 
 ## 性格（可选 LLM）
 
@@ -138,7 +138,7 @@ python -m pytest tests -q -p no:cacheprovider
 # 装了宇树上游 SDK（unitree_sdk2py，见 requirements.txt 第 4 节）后为 354 passed, 0 skipped
 # 注：test_dds_sim / test_dds_walk / test_dds_closed_loop 三例跑真实物理仿真 + DDS 闭环，
 #     对机器负载敏感（走位与关节收敛有随机性），负载高时会失败 —— 与大脑层改动无关，
-#     排查记录见 文档/反思层有效性探测_20260905.md §5.5
+#     排查记录见 商议/反思层有效性探测_20260905.md（本地，不入库） §5.5
 # 逐文件用例数只在 文档/测试基线.md 维护（单一信息源）
 ```
 
@@ -164,26 +164,19 @@ python -m pytest tests -q -p no:cacheprovider
 
 ## 文档
 
-| 想看什么 | 读哪份 |
+> **完整索引与维护规则见 `文档/README.md`**（14 篇正文档分四组 + 4 篇历史归档）。
+> 那里是**唯一索引**，本文不复制第二份（复制必然漂移）。
+
+最常被问到的几篇：
+
+| 想知道 | 读哪份 |
 |---|---|
-| 顶层架构 / 复用接缝 / 安全设计 | `文档/架构.md` |
-| **SIM-first 转向审计（缺口清单）** | `文档/SIM_FIRST_AUDIT.md` |
-| **Reflection Benchmark（6 组配置 × 35 场景 × 3 seed = 630 组实测）** | `文档/BENCHMARK.md` |
-| **端到端 Demo 逐步 trace** | `文档/demo_trace.md` |
-| **经验学习相关方案调研（别人怎么解 Reflection/Memory 的病）** | `文档/经验学习_相关方案调研.md` |
-| **后续路线（还没做完的，逐条列清）** | `文档/ROADMAP.md` |
-| **反思闭环（失败→教训→换路线，对着代码写）** | `文档/REFLECTION_LOOP.md` |
-| **参数扫描（阈值/窗口/复核周期敏感度）** | `文档/SWEEP.md` |
-| **新 runtime 的结构（分层 / 依赖方向 / 扩展点）** | `文档/ARCHITECTURE.md` |
-| **仿真到底模拟了什么、没模拟什么** | `文档/SIMULATION.md` |
-| **世界模型与几何约定** | `文档/WORLD_MODEL.md` |
-| **安全模型（五道关 + fail-closed 清单）** | `文档/SAFETY_MODEL.md` |
-| **未来接真机的 backend 规范（只有规范，无实现）** | `文档/FUTURE_ROBOT_BACKEND.md` |
-| 可行性调研 | `文档/ai搜索后相关项目后做的可行性调研.md` |
-| 上狗前必读 | `文档/真机安全清单.md` |
-| **测试基线（含逐文件用例数，唯一权威源）** | `文档/测试基线.md` |
-| Web Console 用法 / 设计 / 数据来源盘点 | `文档/Console_使用说明.md` |
-| 反思层有效性探测（触发/编造/可检索/可消费 四维实测） | `文档/反思层有效性探测_20260905.md` |
+| **测试数字（唯一权威源）** | `文档/测试基线.md` |
+| 新 runtime 的结构（分层 / 依赖方向 / 扩展点） | `文档/ARCHITECTURE.md` |
+| 术语表（同一概念只定义一次） | `文档/GLOSSARY.md` |
+| Reflection 实测（6 组配置 × 35 场景 × 3 seed = 630 组） | `文档/BENCHMARK.md` |
+| 还没做完的（逐条列清） | `文档/ROADMAP.md` |
+| 上狗前必读（物理与人） | `文档/真机安全清单.md` |
 
 ## 硬件门槛
 

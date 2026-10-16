@@ -4,7 +4,7 @@
   1. **只有 Backend 能写 WorldState**（`touch()` 让 version 自增，可审计）；
   2. **Planner / Brain 只能拿到 `WorldView`**（frozen 投影，改就抛错）。
 
-旧系统在这里的病是"状态散在四处、谁都能改"（见 `文档/SIM_FIRST_AUDIT.md` §4）。
+旧系统在这里的病是"状态散在四处、谁都能改"（见 `文档/archive/SIM_FIRST_AUDIT.md` §4）。
 这里用类型把这个边界钉死：dict→tuple、可变→frozen。
 """
 from __future__ import annotations

@@ -4,7 +4,7 @@
   1. 旧闸白名单写死在 `primitives.ALLOWED_MOTION_ACTIONS = ("move_to","navigate","grab","release")`
      —— 迷你世界需要的 `turn / wait / inspect` 会被它拒掉；
   2. 旧闸缺指令要求的**速度上限 / 超时 / 参数范围 / 缺字段 fail-closed**；
-  3. 用户已决定旧闸冻结不改（`文档/SIM_FIRST_AUDIT.md` §2）。
+  3. 用户已决定旧闸冻结不改（`文档/archive/SIM_FIRST_AUDIT.md` §2）。
 
 所以这里新写一个**能力驱动**的闸：白名单来自 `EmbodimentCapabilities`，
 并复用旧闸里两个纯函数（`battery_of` / `_scan_forbidden`）—— **import 而不改写**。

@@ -1,6 +1,8 @@
 # ArgOS Demo Trace —— 失败 → 反思 → 换路线
 
 > 由 `python -m argos.demo` 生成。**纯仿真**，不接任何硬件。
+> ⚠️ **生成物，勿手改** —— 与 `文档/BENCHMARK.md` / `文档/SWEEP.md` 同一套路：
+> 要改数据就改 `argos/demo.py`，再跑 `python -m argos.demo` 重生成。
 > seed = `42`；链路：
 >
 > `Goal → Plan → Action → SafetyGate → Simulator → Observation → Failure → Reflection → Memory → Replan`
@@ -63,6 +65,6 @@
 
 ```bash
 python -m argos.demo                                  # 生成本文件 + JSON trace
-python -m argos.benchmark all --out 文档/BENCHMARK.md  # 各组配置对比（当前 6 组）
+python -m argos.benchmark all --out 文档/BENCHMARK.md  # 各组配置对比（组数见生成文件的表头）
 python -m argos.benchmark run --scenario transient_jam_latency_none --config memory_only
 ```

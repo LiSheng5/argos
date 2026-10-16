@@ -1,5 +1,5 @@
 ﻿"""RobotBackend：把"大脑决定做什么"桥接到 RobotExecutor，且不可绕过 SafetyGate。
-对应 架构.md 第 3/5 节：落账后的单步 action 先过安全闸，再经由执行器下发。
+对应 `文档/archive/架构.md` 第 3/5 节：落账后的单步 action 先过安全闸，再经由执行器下发。
 
 2026-08-29 评审后修订（P0-1）：急停必须到达执行器。
 原来 /api/estop 只置 gate.estop，等于"不再接新单"，但正在跑的那一段动作

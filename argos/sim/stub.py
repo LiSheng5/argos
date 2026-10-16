@@ -1,6 +1,6 @@
 ﻿"""无 3D 的最小仿真实体 SimEntity：纯逻辑移动/抓取状态，离线可测。
 
-三层一致原则（见 架构.md 第 4 节）：
+三层一致原则（见 `文档/archive/架构.md` 第 4 节）：
   SimEntity(stub) -> 真 unitree_mujoco -> 真机 unitree_sdk2，
 三者实现同一 RobotExecutor 协议，切换只改一处注入。
 """

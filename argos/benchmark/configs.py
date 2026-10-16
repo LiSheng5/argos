@@ -1,4 +1,7 @@
-"""四组 Agent 配置（Phase 7）—— 指令第八节要求的那张对比表就是它们之间的比较。
+"""Agent 配置（Phase 7）—— 指令第八节要求的那张对比表就是它们之间的比较。
+
+下面是**核心四组**；另有复核臂 `memory_reflection_revalidate` 与语义软降权臂 `semantic_only`，
+合计 **六组**（组数以 `文档/BENCHMARK.md` 表头为准，别在这里写死）。
 
 | 配置 | 记忆跨 episode | Planner 读 Lesson | 反思门槛 | 预期 |
 |---|---|---|---|---|

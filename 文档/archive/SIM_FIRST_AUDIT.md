@@ -1,4 +1,6 @@
-# SIM_FIRST_AUDIT —— ArgOS 转向「Embodied Agent Runtime」前的现状审计
+# SIM_FIRST_AUDIT —— ArgOS 转向「Embodied Agent Runtime」前的现状审计（⚠️ 已归档）
+
+> ⚠️ **已归档到 `文档/archive/`（2026-10-16）。** 它是 Phase 0 的审计快照，**不随代码更新**。
 
 > 审计日期：2026-09-17 · 方式：**只读**（未修改任何代码）· 结论均实测可复现
 > 被审对象：`D:\ArgOS`（github.com/LiSheng5/argos）
@@ -7,7 +9,7 @@
 >
 > ⚠️ **本文件是 Phase 0 的审计快照（2026-09-17 当时的现状），不随代码更新。**
 > 它点出的缺口（世界模型 / Replan / 失败分类 / 失败注入）**已在 2026-09-18 全部补上** ——
-> 现状请看 `文档/架构.md` §11 与 `文档/WORLD_MODEL.md` / `REFLECTION_LOOP.md` / `SIMULATION.md`。
+> 现状请看 `文档/ARCHITECTURE.md` 与 `文档/WORLD_MODEL.md` / `REFLECTION_LOOP.md` / `SIMULATION.md`。
 > 保留本文件的价值在于**记录"为什么当初要新建一套 runtime"**，而不是描述现在。
 
 ---

@@ -3,7 +3,7 @@
 > **范围**：本文只描述**新 runtime**（`argos/agent/` / `argos/world/` / `argos/backends/` /
 > `argos/sensors/` / `argos/input/` / `argos/benchmark/`）。
 > **旧运行时**（`brain.py` / `executor.py` / `backend.py` … 面向宇树 Go2）的结构见
-> `文档/架构.md` §1–§10，那份仍是它的**单一信息源**，本文**不重抄**（免得两套清单漂移）。
+> `文档/archive/架构.md` §1–§10，那份仍是它的**单一信息源**，本文**不重抄**（免得两套清单漂移）。
 
 ---
 
@@ -110,4 +110,4 @@ Brain：成功 → 下一步；失败 → Reflector → LessonStore / AgentMemor
 
 - 两条运行时**并存、互不调用**；旧的一行不改（`git diff` 为空的纪律）。
 - 旧运行时继续服务机器狗链路与 Web Console；新 runtime 用于验证认知闭环。
-- 对照表在 `文档/架构.md` §11。**改旧 runtime 看那份，改新 runtime 看这份。**
+- 对照表在 `文档/archive/架构.md` §11。**改旧 runtime 看那份，改新 runtime 看这份。**

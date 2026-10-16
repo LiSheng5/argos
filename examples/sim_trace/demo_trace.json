@@ -326,7 +326,13 @@
           "evidence": "路径被 north_block 挡住 | 路径被 north_block 挡住",
           "confidence": 0.6666666666666666,
           "hits": 2,
-          "scope": "route:north"
+          "scope": "route:north",
+          "status": "active",
+          "history": [
+            "support@ep2"
+          ],
+          "created_episode": 2,
+          "updated_episode": 2
         }
       ],
       "memory_after": {
@@ -339,7 +345,13 @@
             "evidence": "路径被 north_block 挡住 | 路径被 north_block 挡住",
             "confidence": 0.6666666666666666,
             "hits": 2,
-            "scope": "route:north"
+            "scope": "route:north",
+            "status": "active",
+            "history": [
+              "support@ep2"
+            ],
+            "created_episode": 2,
+            "updated_episode": 2
           }
         ]
       }
@@ -462,7 +474,13 @@
             "evidence": "路径被 north_block 挡住 | 路径被 north_block 挡住",
             "confidence": 0.6666666666666666,
             "hits": 2,
-            "scope": "route:north"
+            "scope": "route:north",
+            "status": "active",
+            "history": [
+              "support@ep2"
+            ],
+            "created_episode": 2,
+            "updated_episode": 2
           }
         ]
       }
